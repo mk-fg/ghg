@@ -354,7 +354,7 @@ def main(args=None):
 	parser.add_argument('-k', '--key', metavar='key-id',
 		help='Local secret key name/id to use in encryption.')
 
-	parser.add_argument('-o', '--stdout',
+	parser.add_argument('-o', '--stdout', action='store_true',
 		help='Encrypt/decrypt to stdout, even when file path is specified.')
 
 	parser.add_argument('-s', '--stable', action='store_true',
