@@ -379,8 +379,13 @@ def main(args=None):
 	if opts.encrypt and opts.decrypt:
 		parser.error('Both --encrypt and --decrypt at the same time make no sense.')
 
-	conf, conf_paths = dict(), ['/etc/ghg.yaml', '~/.ghg.yaml']
-	for path in filter(exists, map(expanduser, conf_paths)):
+	conf_paths = ['/etc/ghg.yaml', '~/.ghg.yaml']
+	conf, conf_srcs = dict(), filter(
+		lambda p: os.access(p, os.R_OK), map(expanduser, conf_paths) )
+	if not conf_srcs:
+		parser.error( 'No existing/accessible'
+			' conf-paths found, tried: {}'.format(', '.join(conf_paths)) )
+	for path in conf_srcs:
 		with open(path, 'rb') as src:
 			# if stat.S_IRWXO(os.fstat(src).st_mode):
 			# 	raise GHGError('Insecure (world-readable) mode for conf-path: {!r}'.format(p))
