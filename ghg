@@ -15,6 +15,11 @@ from libnacl.public import SecretKey, Box
 from libnacl.utils import rand_nonce
 
 
+p = lambda fmt,*a,**k:\
+	print(*( [fmt.format(*a,**k)]\
+		if isinstance(fmt, types.StringTypes) and (a or k)
+		else [[fmt] + list(a), k] ), file=sys.stderr)
+
 @contextmanager
 def safe_replacement(path, mode=None):
 	if mode is None:
@@ -80,7 +85,7 @@ b64_decode = lambda s:\
 
 class SSHKeyError(Exception): pass
 
-def ssh_key_parse(path, interactive_decrypt=False):
+def ssh_key_parse(path):
 	# See PROTOCOL.key and sshkey.c in openssh sources
 
 	def key_read_str(src=None):
@@ -161,7 +166,8 @@ def ssh_key_parse(path, interactive_decrypt=False):
 	key_assert(padding == padding_chk, 'Invalid padding: {} != {}', padding, padding_chk)
 
 	assert ed2519_sk[32:] == ed2519_pk, [ed2519_sk, ed2519_pk]
-	return dict(sk=ed2519_sk[:32], pk=ed2519_pk)
+	key = SecretKey(ed2519_sk[:32])
+	return dict(sk=key.sk, pk=key.pk)
 
 
 
@@ -183,6 +189,11 @@ class GHGCrypt(object):
 				if not key_spec: continue
 				self.pk_cache['raw-{}'.format(pkid)] = key_spec
 
+	def key_parse_chk(self, key_spec, t=None):
+		if not t: t = ['ssh', 'raw64', 'pub64']
+		elif isinstance(t, types.StringTypes): t = [bytes(t)]
+		return any(key_spec.startswith(k+'-') for k in t)
+
 	def key_parse(self, key_spec):
 		if key_spec not in self.keys:
 			spec = key_spec.strip().split('-', 1)
@@ -196,6 +207,7 @@ class GHGCrypt(object):
 			elif t == 'raw64':
 				key_obj = SecretKey(b64_decode(spec))
 				key = dict(pk=key_obj.pk, sk=key_obj.sk)
+			elif t == 'pub64': key = dict(pk=b64_decode(spec))
 			else: key = None
 			self.keys[key_spec] = key
 		return self.keys[key_spec]
@@ -207,8 +219,10 @@ class GHGCrypt(object):
 			if cache_spec_k in self.pk_cache:
 				return self.pk_cache[cache_spec_k]
 			key_or_pk = self.key_parse(key_spec)
+		if not key_or_pk: return
 		if not isinstance(key_or_pk, types.StringTypes):
 			key_or_pk = key_or_pk['pk']
+		assert len(key_or_pk) == 32, key_or_pk
 		return b64_encode(libnacl.crypto_generichash(key_or_pk)[:6])
 
 	def key_pkid_lookup(self, pkid, key_specs):
@@ -217,6 +231,9 @@ class GHGCrypt(object):
 				cache_spec_k = 'k-{}'.format(key_spec)
 				if cache_spec_k in self.pk_cache: return
 				key = self.key_parse(key_spec)
+				if 'sk' not in key:
+					self.pk_cache[cache_spec_k] = None
+					return
 				key_pkid = self.key_pkid(key)
 				self.pk_cache.update({key_pkid: key, cache_spec_k: key_pkid})
 				return key_pkid
@@ -254,17 +271,18 @@ class GHGCrypt(object):
 			dst.write('{} {}\n'.format(head_base, pkid))
 
 			n, pt_sha256 = 0, hashlib.sha256()
+			# p( 'enc - nb: {}, pk-src: {}, pk-dst: {}',
+			# 	*map(b64_encode, [nonce_base, src_key['pk'], pk]) )
 			while True:
 				cpt = src.read(self.enc_bs)
-				nonce = nonce_base + struct.pack('>Q', n)
-				if cpt:
-					pt_sha256.update(cpt)
-					cct = libnacl.crypto_box(cpt, nonce, pk, sk)
-				else:
-					cct = libnacl.crypto_box(pt_sha256.digest(), nonce, pk, sk)
-				dst.write(struct.pack('>II', len(cct), len(cpt)))
+				cpt_len, nonce = len(cpt), nonce_base + struct.pack('>Q', n)
+				if cpt_len: pt_sha256.update(cpt)
+				else: cpt = pt_sha256.digest()
+				cct = libnacl.crypto_box(cpt, nonce, pk, sk)
+				# p('enc - block: {}, ct: {}', n, b64_encode(cct))
+				dst.write(struct.pack('>II', len(cct), cpt_len))
 				dst.write(cct)
-				if not cpt: break
+				if not cpt_len: break
 				n += 1
 
 	def decrypt(self, src, dst, key_specs):
@@ -274,12 +292,16 @@ class GHGCrypt(object):
 
 			head = head.split()
 			assert head[0] == self.enc_magic, head
-			head_ver, src_pk, nonce_base, pkid = int(head[1]),\
+			head_ver, pk, nonce_base, pkid = int(head[1]),\
 				b64_decode(head[2]), b64_decode(head[3]), head[4]
 			key = self.key_pkid_lookup(pkid, key_specs)
-			if key: key_box, pt_sha256 = Box(key['sk'], src_pk), hashlib.sha256()
+			if key:
+				sk = key['sk']
+				key_box, pt_sha256 = Box(sk, pk), hashlib.sha256()
 
 			n, cpt_last = 0, None
+			# p( 'dec - nb: {}, pk-src: {}, pk-dst: {}',
+			# 	*map(b64_encode, [nonce_base, pk, key and key['pk'] or '']) )
 			while True: # read-or-skip loop for chunks
 				cct_len, cpt_len = struct.unpack('>II', src.read(8))
 				if cpt_last:
@@ -288,16 +310,16 @@ class GHGCrypt(object):
 					cpt_last = None
 				if key:
 					cct, nonce = src.read(cct_len), nonce_base + struct.pack('>Q', n)
+					# p('dec - block: {}, ct: {}', n, b64_encode(cct))
+					cpt_last = libnacl.crypto_box_open(cct, nonce, pk, sk)
 					if cpt_len:
-						cpt_last = key_box.decrypt(cct, nonce)
 						assert cpt_len == len(cpt_last), [cpt_len, len(cpt_last)]
 						n += 1
 					else:
-						pt_sha256_str, pt_sha256_chk = pt_sha256.digest(), key_box.decrypt(cct, nonce)
-						assert hmac.compare_digest(
-							pt_sha256_str, pt_sha256_chk ), [pt_sha256_str, pt_sha256_chk]
-						return # only clean exit
-				else: src.seek(ct_len, os.SEEK_CUR)
+						pt_sha256_str = pt_sha256.digest()
+						assert hmac.compare_digest(pt_sha256_str, cpt_last), [pt_sha256_str, cpt_last]
+						return # only clean exit here
+				else: src.seek(cct_len, os.SEEK_CUR)
 
 			if key: raise GHGError('Incomplete source data (missing chunks)')
 
@@ -340,14 +362,16 @@ def main(args=None):
 			' Will fail with large stdin stream, as it requires'
 				' two-pass processing (and hence buffering) of data.')
 
-	parser.add_argument('-g', '--gen-pkid-cache', action='store_true',
+	parser.add_argument('--gen-pkid-cache', action='store_true',
 		help='Generate/print YAML "pkid_cache" section contents for all known keys and exit.'
 			' Will NOT update ghg.yaml files with these values, only print them to stdout.')
 
 	parser.add_argument('-p', '--pubkey',
 		nargs='?', const=True, metavar='key-id',
-		help='Print public key for specified key name/id.'
+		help='Print public key for specified key name/id and exit.'
 			' With no argument, pubkey for default key will be printed.')
+	parser.add_argument('-g', '--genkey', action='store_true',
+		help='Generate/print a new secret key and exit.')
 
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
@@ -356,8 +380,8 @@ def main(args=None):
 		parser.error('Both --encrypt and --decrypt at the same time make no sense.')
 
 	conf, conf_paths = dict(), ['/etc/ghg.yaml', '~/.ghg.yaml']
-	for p in filter(exists, map(expanduser, conf_paths)):
-		with open(p, 'rb') as src:
+	for path in filter(exists, map(expanduser, conf_paths)):
+		with open(path, 'rb') as src:
 			# if stat.S_IRWXO(os.fstat(src).st_mode):
 			# 	raise GHGError('Insecure (world-readable) mode for conf-path: {!r}'.format(p))
 			c = yaml_load(src)
@@ -377,7 +401,7 @@ def main(args=None):
 
 	if opts.gen_pkid_cache:
 		pkid_cache = dict(pkid_cache=OrderedDict(
-			(k, ghg.key_pkid(v)) for k, v in conf['keys'].viewitems() ))
+			(k, ghg.key_pkid(key_spec=v)) for k, v in conf['keys'].viewitems() ))
 		print('# Put the following YAML as-is into one of the config files')
 		yaml_dump(pkid_cache, sys.stdout)
 		return
@@ -386,6 +410,10 @@ def main(args=None):
 		k = opts.pubkey
 		if k is True: k = conf['core']['key']
 		print('pub64-{}'.format(b64_encode(ghg.key_parse(conf['keys'][k])['pk'])))
+		return
+
+	if opts.genkey:
+		print('raw64-{}'.format(b64_encode(libnacl.crypto_box_keypair()[1])))
 		return
 
 	@contextmanager
@@ -415,7 +443,9 @@ def main(args=None):
 				else: nonce_base = None
 				src_key_spec = conf['keys'][opts.key or conf['core']['key']]
 				dst_key_specs = [conf['keys'][conf['core']['key']]]\
-					if not opts.recipient else list(conf['keys'][k] for k in opts.recipient)
+					if not opts.recipient else list(
+						(conf['keys'][k] if not ghg.key_parse_chk(k, 'pub64') else k)
+						for k in opts.recipient )
 				crypto_op_run = lambda dst: ghg.encrypt(
 					src, dst, src_key_spec, dst_key_specs, nonce_base )
 
