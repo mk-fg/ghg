@@ -1,0 +1,20 @@
+
+core:
+  key: mykey # name of the default key to use
+
+## pkid_cache can be generated using
+##  --gen-pkid-cache for decryption speedup with many keys.
+# pkid_cache:
+
+keys:
+  # Hashed to pkid's (if not cached) in the same order, when needed
+
+  ssh-host: ssh-/etc/ssh/ssh_host_ed25519_key # only if accessible
+  ssh-user: ssh-~/.ssh/id_ed25519
+
+  mykey: raw64-v81IAezQzuzZQ0e9LQk2eaMRNzTAyxFRAfW-qSK-svQ=
+  mykey-on-remote: pub64-mIkC20NfVcFLgKJ5bm5ck93BB55R0XjXTElbtKZ6zSs=
+
+  ## Value format is: { ssh | raw64 | pub64 }-{spec}
+  # mykey-a: raw64-gXNGcNgy22YxBTDb5wK0Cz8zpRNhjrs-aDLanbj22Fs=
+  # mykey-b: ssh-~/.ssh/id_ed25519_mykey-b
