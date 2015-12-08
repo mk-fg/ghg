@@ -1,12 +1,12 @@
 ghg
 ===
 
-Simple GnuPG_ (command-line "gpg" tool, PGP implementation) replacement for file
-encryption, based on python-libnacl_ crypto primitives (`NaCl crypto_box`_),
-which doesn't require complex key/trust management stuff and can use ssh ed25519
-keys directly, as well as base64-encoded key strings.
+Simple GnuPG_ (command-line "gpg" tool, FOSS PGP implementation) replacement for
+file encryption, based on python-libnacl_ crypto primitives (`NaCl
+crypto_box`_), which doesn't require complex key/trust management stuff and can
+use ssh ed25519 keys directly, as well as base64-encoded key strings.
 
-All key management happens by editing YAML (with ordered keys for maps) file in
+All key management happens by editing YAML_ (with ordered keys for maps) file in
 either ``/etc/ghg.yaml`` or ``~/.ghg.yaml``.
 Both files are read and merged together (if/when present), with matching keys
 from latter overriding ones in the former.
@@ -84,6 +84,9 @@ Usage::
   ...
   ## See output for all the other options
 
+Some knowledge of how assymetric crypto algos work is assumed on the part of the
+user, to understand the basic concepts of "public" and "secret" keys, for example.
+
 
 
 Installation
@@ -125,21 +128,23 @@ Encryption process in pseudocode::
       key = enc_magic,
       msg = file_plaintext,
       digest = sha256 )
-    nonce_24B = nonce_32B[:24]
+    nonce_16B = nonce_32B[:16]
 
   else:
-    nonce_24B = read(/dev/urandom, 24)
+    nonce_16B = read('/dev/urandom', 16)
+
+  file_checksum = sha256(file_plaintext)
 
   for box_dst_pk in box_dst_pk_list:
 
     pkid_b64_8B = base64(blake2b(box_dst_pk)[:6])
     box_src_pk_b64 = base64(box_src_pk)
-    nonce_24B_b64 = base64(nonce_24B)
+    nonce_16B_b64 = base64(nonce_16B)
 
     header = enc_magic || ' ' ||
       enc_ver || ' ' ||
       box_src_pk_b64 || ' ' ||
-      nonce_24B_b64 || ' ' ||
+      nonce_16B_b64 || ' ' ||
       pkid_b64_8B || '\n'
 
     write(header)
@@ -147,7 +152,7 @@ Encryption process in pseudocode::
     n = 0
     for chunk_plaintext in break_into_chunks(file_plaintext, enc_block_size):
 
-      chunk_nonce = nonce_24B || uint64_BE(n)
+      chunk_nonce = nonce_16B || uint64_BE(n)
       chunk_ciphertext = crypto_box(chunk_plaintext, chunk_nonce, box_dst_pk, box_src_sk)
       n += 1
 
@@ -157,8 +162,7 @@ Encryption process in pseudocode::
       write(box_header)
       write(chunk_ciphertext)
 
-    file_checksum = sha256(file_plaintext)
-    chunk_nonce = nonce_24B || uint64_BE(n)
+    chunk_nonce = nonce_16B || uint64_BE(n)
     checksum_ciphertext = crypto_box(file_checksum, chunk_nonce, box_dst_pk, box_src_sk)
 
     box_header_last = uint32_BE(length(checksum_ciphertext)) || uint32_BE(0)
@@ -173,7 +177,7 @@ by very smart and skilled people (djb being the main author).
 
 Nonce is only derived from plaintext hash if --stable option is specified,
 which should exclude possibility of reuse for different plaintexts,
-yet provide deterministic output for the same file, otherwise random.
+yet provide deterministic output for the same file, otherwise is random.
 
 "enc_ver" is encoded into "header" lines in case encryption algorithm might
 change in the future.
@@ -216,5 +220,6 @@ Links
 .. _GnuPG: https://www.gnupg.org/
 .. _python-libnacl: https://libnacl.readthedocs.org/
 .. _NaCl crypto_box: http://nacl.cr.yp.to/box.html
+.. _YAML: https://en.wikipedia.org/wiki/YAML
 .. _PyYAML: http://pyyaml.org/
 .. _pip: https://pip.pypa.io/
