@@ -336,6 +336,11 @@ def main(args=None):
 				'--encrypt will write a new file with .ghg suffix, removing the old one,'
 				' and --decrypt will remove .ghg suffix and encrypted file, if present.')
 
+	parser.add_argument('-c', '--conf',
+		action='append', metavar='path',
+		help='Extra config file(s) to load on top of default ones.'
+			' Can be specified multiple times.')
+
 	parser.add_argument('-e', '--encrypt', action='store_true',
 		help='Encrypt specified file or stdin stream.'
 			' Public-key encryption (nacl crypto_box) is used as'
@@ -380,7 +385,7 @@ def main(args=None):
 	if opts.encrypt and opts.decrypt:
 		parser.error('Both --encrypt and --decrypt at the same time make no sense.')
 
-	conf_paths = ['/etc/ghg.yaml', '~/.ghg.yaml']
+	conf_paths = ['/etc/ghg.yaml', '~/.ghg.yaml'] + list(opts.conf or list())
 	conf, conf_srcs = dict(), filter(
 		lambda p: os.access(p, os.R_OK), map(expanduser, conf_paths) )
 	if not conf_srcs:
@@ -399,6 +404,11 @@ def main(args=None):
 				for k, v in c.viewitems():
 					if v is None: cs.pop(k, None)
 					else: cs[k] = v
+	for k, v in conf['keys'].items():
+		if v.strip().startswith('link-'):
+			v = conf['keys'].get(v[5:])
+			if not v: del conf['keys'][k]
+			else: conf['keys'][k] = v
 
 	stream_buff_len = 10 * 2**20 # 10 MiB
 	ghg = GHGCrypt(dict(

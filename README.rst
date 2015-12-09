@@ -47,9 +47,13 @@ ghg.example.yaml::
     mykey: raw64-v81IAezQzuzZQ0e9LQk2eaMRNzTAyxFRAfW-qSK-svQ=
     mykey-on-remote: pub64-mIkC20NfVcFLgKJ5bm5ck93BB55R0XjXTElbtKZ6zSs=
 
-    ## Value format is: { ssh | raw64 | pub64 }-{spec}
+    backup: link-backup-hostX
+    backup-hostX: pub64-DZqKsImH_Rizt38ariDw-jD-E9pXFbNQ38aoyKIIn2k=
+
+    ## Value format is: { ssh | raw64 | pub64 | link }-{spec}
     # mykey-a: raw64-gXNGcNgy22YxBTDb5wK0Cz8zpRNhjrs-aDLanbj22Fs=
     # mykey-b: ssh-~/.ssh/id_ed25519_mykey-b
+    # mykey-current: link-mykey-b
 
 Usage::
 
@@ -69,7 +73,7 @@ Usage::
   ## Encrypting huge files should be fine (chunked), stdin/stdout work too
   ## If neither -e/-d are specified, direction is auto-detected from file magic
 
-  % ghg -se secret-data.txt
+  % ghg -se -r backup secret-data.txt
   ## -s/--stable uses hmac-sha256 of the plaintext as nonce
 
   % ghg -p mykey
