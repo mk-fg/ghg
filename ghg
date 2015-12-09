@@ -21,6 +21,8 @@ p = lambda fmt,*a,**k:\
 		if isinstance(fmt, types.StringTypes) and (a or k)
 		else [[fmt] + list(a), k] ), file=sys.stderr)
 
+uniq_filter = lambda v: list(OrderedDict.fromkeys(filter(None, v)))
+
 
 @contextmanager
 def safe_replacement(path, mode=None):
@@ -85,7 +87,7 @@ class IOReliableReadBuffer(object):
 			self.pos += len(cached)
 			if n and n > 0: n -= len(cached)
 		if n != 0:
-			new = getattr(self.src, _op)(n)
+			new, n = getattr(self.src, _op)(n), 0
 			if new:
 				self.pos += len(new)
 				if self.buff and not self._buff_stop:
@@ -470,6 +472,10 @@ def main(args=None):
 	if opts.encrypt and opts.decrypt:
 		parser.error('Both --encrypt and --decrypt at the same time make no sense.')
 
+	if opts.genkey:
+		print('raw64-{}'.format(b64_encode(libnacl.crypto_box_keypair()[1])))
+		return
+
 	conf_paths = ['/etc/ghg.yaml', '~/.ghg.yaml'] + list(opts.conf or list())
 	conf, conf_srcs = dict(), filter(
 		lambda p: os.access(p, os.R_OK), map(expanduser, conf_paths) )
@@ -513,10 +519,6 @@ def main(args=None):
 		print('pub64-{}'.format(b64_encode(ghg.key_parse(conf['keys'][k])['pk'])))
 		return
 
-	if opts.genkey:
-		print('raw64-{}'.format(b64_encode(libnacl.crypto_box_keypair()[1])))
-		return
-
 	@contextmanager
 	def crypto_op_src(src_file):
 		with IOReliableReadBuffer(src_file, stream_buff_len) as src:
@@ -526,25 +528,25 @@ def main(args=None):
 			if encrypt:
 				if opts.stable:
 					buff, nonce_base = '', hmac.new(ghg.enc_magic, '', hashlib.sha256)
-					for buff in iter(ft.partial(src_file.read, ghg.enc_bs), ''): nonce_base.update(buff)
+					for buff in iter(ft.partial(src.read, ghg.enc_bs), ''): nonce_base.update(buff)
 					nonce_base = nonce_base.digest()[:16]
 					src.rewind()
 					del buff
 				else: nonce_base = None
 				src_key_spec = conf['keys'][opts.key or conf['core']['key']]
 				dst_key_specs = [conf['keys'][conf['core']['key']]]\
-					if not opts.recipient else list(
+					if not opts.recipient else uniq_filter(
 						(conf['keys'][k] if not ghg.key_parse_chk(k, 'pub64') else k)
 						for k in opts.recipient )
-				dst_key_specs = list(OrderedDict.fromkeys(filter(None, dst_key_specs)))
 				assert dst_key_specs
 				if len(dst_key_specs) == 1: src.buff_stop()
 				crypto_op_run = lambda dst: ghg.encrypt(
 					src, dst, src_key_spec, dst_key_specs, nonce_base )
 
 			else:
-				key_specs = [conf['keys'].get(conf['core']['key'])] + conf['keys'].values()
-				key_specs = list(OrderedDict.fromkeys(filter(None, key_specs)))
+				key_specs = uniq_filter([conf['keys'].get(conf['core']['key'])] + conf['keys'].values())
+				assert key_specs
+				src.buff_stop()
 				crypto_op_run = lambda dst: ghg.decrypt(src, dst, key_specs)
 
 			if not src.name: dst_path = None
