@@ -350,6 +350,7 @@ def main(args=None):
 	parser.add_argument('-r', '--recipient',
 		action='append', metavar='key-id',
 		help='Public key name/id to encrypt to or decrypt with.'
+			' Public key itself can also be specified in pub64-* format.'
 			' Can be specified multiple times to provide ciphertext for each key.')
 	parser.add_argument('-k', '--key', metavar='key-id',
 		help='Local secret key name/id to use in encryption.')
