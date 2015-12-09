@@ -406,7 +406,9 @@ class GHGCrypt(object):
 						pt_sha256_str = pt_sha256.digest()
 						assert hmac.compare_digest(pt_sha256_str, cpt_last), [pt_sha256_str, cpt_last]
 						return # only clean exit here
-				else: src.seek(cct_len, os.SEEK_CUR)
+				else:
+					src.read(cct_len)
+					if not cpt_len: break
 
 			if key: raise GHGError('Incomplete source data (missing chunks)')
 

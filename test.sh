@@ -25,6 +25,8 @@ core:
   key: mykey
 keys:
   mykey: $(./ghg -g)
+  key-2: $(./ghg -g)
+  key-3: $(./ghg -g)
 EOF
 ghg="./ghg -c $tmp/ghg.yaml"
 
@@ -66,17 +68,24 @@ sha256 "$p" >"$p".chk
 for n in 1 2 3 4 5 6; do sha256 "$p"."$n" >>"$p".chk; done
 [[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 7 ]] || { cat "$p".chk; die; }
 
+$ghg -so "$p".6 >"$p".stable4.ghg
+if [[ -e "$p".6.ghg ]]; then die; fi
+$ghg -od "$p".stable4.ghg >"$p".6x
+
 : >"$p".chk
 for pn in "$p".stable*.ghg; do sha256 "$pn" >>"$p".chk; done
-[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 3 ]] || { cat "$p".chk; die; }
+[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 4 ]] || { cat "$p".chk; die; }
 
 $ghg "$p".stable1.ghg
 $ghg "$p".stable3.ghg
+$ghg "$p".stable4.ghg
 
 sha256 "$p" >"$p".chk
 sha256 "$p".stable1 >>"$p".chk
 sha256 "$p".stable3 >>"$p".chk
-[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 3 ]] || { cat "$p".chk; die; }
+sha256 "$p".6x >>"$p".chk
+sha256 "$p".stable4 >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 5 ]] || { cat "$p".chk; die; }
 
 if [[ -e "$p".7 ]]; then die; fi
 echo xxx >"$p".7.ghg
@@ -123,6 +132,66 @@ $ghg "$p"
 [[ -s "$p".ghg ]] || die
 $ghg "$p".ghg
 if [[ -s "$p" ]]; then die; fi
+
+
+
+echo "-- test: multikey"
+
+p="$tmp"/file.multi
+dd if=/dev/urandom of="$p" bs=300 count=1 status=none
+
+$ghg -so -r $($ghg -p) "$p" >"$p".stable1.ghg
+$ghg -so -r $($ghg -p mykey) "$p" >"$p".stable2.ghg
+$ghg -so -r mykey "$p" >"$p".stable3.ghg
+
+: >"$p".chk
+for pn in "$p".stable*.ghg; do sha256 "$pn" >>"$p".chk; done
+[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 3 ]] || { cat "$p".chk; die; }
+
+$ghg -so -r key-2 "$p" >"$p".k2-1.ghg
+$ghg -so -k key-2 "$p" >"$p".k2-2.ghg
+$ghg -so -k key-3 -r key-2 "$p" >"$p".k2-3.ghg
+
+sha256 "$p" >"$p".chk
+sha256 "$p".stable1.ghg >>"$p".chk
+sha256 "$p".k2-1.ghg >>"$p".chk
+sha256 "$p".k2-2.ghg >>"$p".chk
+sha256 "$p".k2-3.ghg >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 5 && "$(wc -l <"$p".chk)" -eq 5 ]] || { cat "$p".chk; die; }
+
+$ghg -d "$p".k2-1.ghg
+$ghg -d "$p".k2-2.ghg
+$ghg -d "$p".k2-3.ghg
+$ghg -d "$p".stable1.ghg
+
+sha256 "$p" >"$p".chk
+sha256 "$p".k2-1 >>"$p".chk
+sha256 "$p".k2-2 >>"$p".chk
+sha256 "$p".k2-3 >>"$p".chk
+sha256 "$p".stable1 >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 5 ]] || { cat "$p".chk; die; }
+
+$ghg -r pub64-DZqKsImH_Rizt38ariDw-jD-E9pXFbNQ38aoyKIIn2k= -r key-3 <"$p" >"$p".k2-1.ghg
+$ghg -k key-2 -r pub64-mIkC20NfVcFLgKJ5bm5ck93BB55R0XjXTElbtKZ6zSs= -r key-3 <"$p" >"$p".k2-2.ghg
+$ghg -r mykey -r pub64-DZqKsImH_Rizt38ariDw-jD-E9pXFbNQ38aoyKIIn2k= <"$p" >"$p".k2-3.ghg
+$ghg -d "$p".k2-1.ghg
+$ghg -d "$p".k2-2.ghg
+$ghg -d "$p".k2-3.ghg
+
+sha256 "$p" >"$p".chk
+sha256 "$p".k2-1 >>"$p".chk
+sha256 "$p".k2-2 >>"$p".chk
+sha256 "$p".k2-3 >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 4 ]] || { cat "$p".chk; die; }
+
+$ghg -r pub64-DZqKsImH_Rizt38ariDw-jD-E9pXFbNQ38aoyKIIn2k= -r pub64-mIkC20NfVcFLgKJ5bm5ck93BB55R0XjXTElbtKZ6zSs= <"$p" >"$p".k2-1.ghg
+$ghg -k key-2 -r pub64-DZqKsImH_Rizt38ariDw-jD-E9pXFbNQ38aoyKIIn2k= <"$p" >"$p".k2-2.ghg
+rm "$p".k2-1
+if $ghg -d "$p".k2-1.ghg 2>/dev/null; then die; fi
+if [[ -e "$p".k2-1 ]]; then die; fi
+rm "$p".k2-2
+if $ghg -d "$p".k2-2.ghg 2>/dev/null; then die; fi
+if [[ -e "$p".k2-2 ]]; then die; fi
 
 
 
