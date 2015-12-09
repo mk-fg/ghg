@@ -15,10 +15,12 @@ from libnacl.public import SecretKey, Box
 from libnacl.utils import rand_nonce
 
 
+
 p = lambda fmt,*a,**k:\
 	print(*( [fmt.format(*a,**k)]\
 		if isinstance(fmt, types.StringTypes) and (a or k)
 		else [[fmt] + list(a), k] ), file=sys.stderr)
+
 
 @contextmanager
 def safe_replacement(path, mode=None):
@@ -36,6 +38,86 @@ def safe_replacement(path, mode=None):
 		finally:
 			try: os.unlink(tmp.name)
 			except (OSError, IOError): pass
+
+
+class IOReliableReadBuffer(object):
+	'''Restricted io.BufferedReader subset that buffers non-seekable streams,
+			allows seeks there, and has peek() return strictly "up to n or EOF" number of bytes.
+		Setting max_buff_len will raise IOError if stream buffer gets larger than that.'''
+
+	src = buff = buff_len_max = _buff_stop = None
+	buff_len = pos = pos_offset = 0
+
+	def __init__(self, src, buff_len_max=None, buff_force=None):
+		self.buff_len_max = buff_len_max
+		if hasattr(src, 'read'): self.src = src
+		elif isinstance(src, (int, long, types.StringTypes)):
+			self.src = io.open(src, 'rb')
+		assert buff_force in [None, True, False], buff_force
+		if buff_force is not False:
+			try:
+				if buff_force: raise IOError
+				if hasattr(self.src, 'seekable')\
+					and not self.src.seekable(): raise IOError
+				self.pos_offset = self.src.tell()
+				self.src.seek(self.pos_offset)
+			except (OSError, IOError): self.buff = io.BytesIO()
+		self.name = getattr(self.src, 'name', None)
+
+	def __enter__(self): return self
+	def __exit__(self, err_type, err, err_tb): self.close()
+	def __del__(self): self.close()
+
+	def buff_stop(self): self._buff_stop = True
+
+	def close(self):
+		if self.src: self.src.close()
+		if self.buff: self.buff.close()
+
+	def read(self, n=None, _op='read'):
+		if n == 0: return ''
+		elif n is None:
+			return ''.join(list(iter(ft.partial(self.read, 2**20), '')))
+		cached = ''
+		if self.buff and self.pos < self.buff_len:
+			self.buff.seek(self.pos)
+			cached = getattr(self.buff, _op)(n)
+			self.pos += len(cached)
+			if n and n > 0: n -= len(cached)
+		if n != 0:
+			new = getattr(self.src, _op)(n)
+			if new:
+				self.pos += len(new)
+				if self.buff and not self._buff_stop:
+					if self.buff_len_max is not None\
+							and self.pos + len(new) > self.buff_len_max:
+						raise IOError(
+							'Input stream is too large to buffer (limit: {:.1f} MiB)'\
+							.format(self.buff_len_max / float(2**20)) )
+					self.buff.seek(self.pos - len(new))
+					self.buff.write(new)
+					self.buff_len = self.pos
+				cached = (cached + new) if cached else new
+		return cached
+
+	def readline(self, limit=-1):
+		return self.read(limit, _op='readline')
+
+	def _seek(self, pos):
+		self.pos = pos
+		if not self.buff: self.src.seek(pos + self.pos_offset)
+
+	def peek(self, n=None):
+		pos = self.pos
+		cached = self.read(n)
+		self._seek(pos)
+		return cached
+
+	def rewind(self):
+		if self.buff and self._buff_stop and self.pos > self.buff_len:
+			raise IOError('Buffering was disabled, unable to rewind.')
+		self._seek(0)
+
 
 class OrderedDictYAMLLoader(yaml.SafeLoader):
 	'Based on: https://gist.github.com/844388'
@@ -78,9 +160,11 @@ yaml_load = lambda src,**kws: yaml.load(src, OrderedDictYAMLLoader, **kws)
 yaml_dump = lambda data,dst=None,**kws: yaml.safe_dump(
 	data, dst, allow_unicode=True, default_flow_style=False, **kws )
 
+
 b64_encode = base64.urlsafe_b64encode
 b64_decode = lambda s:\
 	base64.urlsafe_b64decode(s) if '-' in s or '_' in s else s.decode('base64')
+
 
 
 class SSHKeyError(Exception): pass
@@ -264,6 +348,7 @@ class GHGCrypt(object):
 			b64_encode(src_key['pk']), b64_encode(nonce_base) )
 
 		for dst_key_spec in dst_key_specs:
+			src.rewind()
 			key = self.key_parse(dst_key_spec)
 			assert key, dst_key_spec
 			pk, pkid = key['pk'], self.key_pkid(key)
@@ -433,28 +518,17 @@ def main(args=None):
 		return
 
 	@contextmanager
-	def crypto_op_src(src_file=None):
-		if not src_file: src_file, src_is_stream = io.open(sys.stdin.fileno(), 'rb'), True
-		else: src_is_stream = False
-
-		with io.BufferedReader(src_file, stream_buff_len) as src:
+	def crypto_op_src(src_file):
+		with IOReliableReadBuffer(src_file, stream_buff_len) as src:
 			encrypt = not ( ghg.is_encrypted(src)
 				if not (opts.encrypt or opts.decrypt) else opts.decrypt )
 
 			if encrypt:
 				if opts.stable:
-					if src_is_stream:
-						buff = src.peek(stream_buff_len)
-						if len(buff) >= stream_buff_len:
-							raise GHGError( 'Stdin is too large to buffer and process with'
-								' --stable option (limit: {:.1f} MiB).'.format(stream_buff_len / float(2**20)) )
-						nonce_base = hmac.new(ghg.enc_magic, buff, hashlib.sha256).digest()[:16]
-					else:
-						pos, buff = src.tell(), ''
-						nonce_base = hmac.new(ghg.enc_magic, buff, hashlib.sha256)
-						for buff in iter(ft.partial(src_file.read, ghg.enc_bs), ''): nonce_base.update(buff)
-						nonce_base = nonce_base.digest()[:16]
-						src.seek(pos)
+					buff, nonce_base = '', hmac.new(ghg.enc_magic, '', hashlib.sha256)
+					for buff in iter(ft.partial(src_file.read, ghg.enc_bs), ''): nonce_base.update(buff)
+					nonce_base = nonce_base.digest()[:16]
+					src.rewind()
 					del buff
 				else: nonce_base = None
 				src_key_spec = conf['keys'][opts.key or conf['core']['key']]
@@ -462,6 +536,9 @@ def main(args=None):
 					if not opts.recipient else list(
 						(conf['keys'][k] if not ghg.key_parse_chk(k, 'pub64') else k)
 						for k in opts.recipient )
+				dst_key_specs = list(OrderedDict.fromkeys(filter(None, dst_key_specs)))
+				assert dst_key_specs
+				if len(dst_key_specs) == 1: src.buff_stop()
 				crypto_op_run = lambda dst: ghg.encrypt(
 					src, dst, src_key_spec, dst_key_specs, nonce_base )
 
@@ -476,14 +553,13 @@ def main(args=None):
 			yield (crypto_op_run, dst_path)
 
 	if opts.path:
-		src = io.open(opts.path, 'rb')
-		with crypto_op_src(src) as (crypto_op_run, dst_path):
+		with crypto_op_src(open(opts.path, 'rb')) as (crypto_op_run, dst_path):
 			if not opts.stdout:
 				with safe_replacement(opts.path) as dst: crypto_op_run(dst)
 				os.rename(opts.path, dst_path)
 			else: crypto_op_run(sys.stdout)
 	else:
-		with crypto_op_src() as (crypto_op_run, dst_path): crypto_op_run(sys.stdout)
+		with crypto_op_src(sys.stdin) as (crypto_op_run, dst_path): crypto_op_run(sys.stdout)
 
 
 if __name__ == '__main__': sys.exit(main())
