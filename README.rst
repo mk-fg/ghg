@@ -12,8 +12,8 @@ Both files are read and merged together (if/when present), with matching keys
 from latter overriding ones in the former.
 
 Does not care about gpg-agent and any kind of secret key encryption, email
-encryption and authentication (signatures), "web of trust", signing keys or
-having images embedded in them - only for file encryption, as mentioned.
+encryption and authentication (signatures), compression, "web of trust", signing
+keys or having images embedded in them - only for file encryption, as mentioned.
 
 Same as with all crypto tools - use at your own risk, manage your trust
 carefully and check/audit such stuff for basic sanity, at least.
@@ -197,6 +197,12 @@ ciphertext blocks (encrypted for a unavailable key) skipped.
 "file_checksum" is not strictly necessary with AEAD that crypto_box provides,
 but added to make sure that code doesn't mess up merging chunks' plaintexts in
 any way.
+
+Unlike gpg, this tool explicitly doesn't do compression, which can be applied
+before encryption manually (encypted data is pretty much incompressible), but do
+keep in mind that it inevitably leaks information about plaintext, which is
+especially bad if attacker has control over any part of it (see attacks against
+compression in TLS for examples).
 
 
 
