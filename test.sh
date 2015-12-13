@@ -21,12 +21,33 @@ tmp=$(mktemp -d /tmp/.ghg-test.XXXXXX)
 [[ -n "$debug" ]] || trap "rm -rf '$tmp'" EXIT
 
 cat >"$tmp"/ghg.yaml <<EOF
+
 core:
   key: mykey
+
 keys:
+
   mykey: $(./ghg -g)
+
   key-2: $(./ghg -g)
   key-3: $(./ghg -g)
+  key-4: $(./ghg -g)
+  key-nx:
+
+  key-g1:
+    - link-key-2
+    - link-key-3
+    - link-key-2
+  key-g2:
+    - link-key-2
+    - link-key-g1
+    - link-nx
+    - $(./ghg -g)
+    - link-mykey
+  key-g3:
+    - pub64-PddqJWLx1T-XWD_tnbjb-uWJNgp8muQFK_jHhflGOGo=
+    - pub64-DZqKsImH_Rizt38ariDw-jD-E9pXFbNQ38aoyKIIn2k=
+
 EOF
 ghg="./ghg -c $tmp/ghg.yaml"
 
@@ -192,6 +213,28 @@ if [[ -e "$p".k2-1 ]]; then die; fi
 rm "$p".k2-2
 if $ghg -d "$p".k2-2.ghg 2>/dev/null; then die; fi
 if [[ -e "$p".k2-2 ]]; then die; fi
+
+$ghg -r key-g1 <"$p" >"$p".g1.ghg
+$ghg -d "$p".g1.ghg
+$ghg -r key-g2 -r key-3 <"$p" >"$p".g2.ghg
+$ghg -d "$p".g2.ghg
+$ghg -r key-g2 -r key-4 <"$p" >"$p".g3.ghg
+$ghg -d "$p".g3.ghg
+
+sha256 "$p" >"$p".chk
+sha256 "$p".g1 >>"$p".chk
+sha256 "$p".g2 >>"$p".chk
+sha256 "$p".g3 >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 4 ]] || { cat "$p".chk; die; }
+
+$ghg -r key-g3 <"$p" >"$p".g1.ghg
+$ghg -r key-g3 -r key-4 <"$p" >"$p".g2.ghg
+if $ghg -d "$p".g1.ghg 2>/dev/null; then die; fi
+$ghg -d "$p".g2.ghg
+sha256 "$p" >"$p".chk
+sha256 "$p".g1 >>"$p".chk
+sha256 "$p".g2 >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 3 ]] || { cat "$p".chk; die; }
 
 
 
