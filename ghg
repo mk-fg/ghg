@@ -23,6 +23,12 @@ p = lambda fmt,*a,**k:\
 
 uniq_filter = lambda v: list(OrderedDict.fromkeys(filter(None, v)))
 
+flatten_lists = lambda x:\
+	list(y for l in x for y in flatten_lists(l))\
+	if isinstance(x, (list, set)) else [x]
+
+uniq_filter_flatten = lambda seq: uniq_filter(flatten_lists(list(seq)))
+
 
 @contextmanager
 def safe_replacement(path, mode=None):
@@ -414,7 +420,53 @@ class GHGCrypt(object):
 
 
 
-def main(args=None):
+def conf_parse(conf_paths, error_func):
+	conf, conf_srcs = dict(), filter(
+		lambda p: os.access(p, os.R_OK), map(expanduser, conf_paths) )
+	if not conf_srcs:
+		error_func( 'No existing/accessible'
+			' conf-paths found, tried: {}', ', '.join(conf_paths) )
+	for path in conf_srcs:
+		with open(path, 'rb') as src:
+			# if stat.S_IRWXO(os.fstat(src).st_mode):
+			# 	raise GHGError('Insecure (world-readable) mode for conf-path: {!r}'.format(p))
+			c = yaml_load(src)
+			for section, c in c.viewitems():
+				if c is None:
+					conf.pop(section, None)
+					continue
+				cs = conf[section] = dict()
+				for k, v in c.viewitems():
+					if v is None: cs.pop(k, None)
+					else: cs[k] = v
+	return conf
+
+def conf_key_spec(v):
+	if not isinstance(v, list):
+		if not v: return
+		assert isinstance(v, types.StringTypes), [type(v), v]
+		v = [v]
+	v = filter(None, (key.strip() for key in v if key))
+	if not v: return
+	return v
+
+def conf_key_resolve_links(keys, k=None, _path=None):
+	if not k:
+		for k in keys.keys(): conf_key_resolve_links(keys, k)
+	if k not in keys: return
+	key_list = keys[k]
+	for n, v in enumerate(list(key_list)):
+		if not v.startswith('link-'): continue
+		kx = v[5:]
+		assert not _path or kx not in _path,\
+			'Mutual recursion: {}'.format(' -> '.join(_path + [kx]))
+		key_list[n] = conf_key_resolve_links(keys, kx, (_path or [k]) + [kx])
+	key_list[:] = uniq_filter_flatten(key_list)
+	if not key_list: del keys[k]
+	else: return key_list
+
+
+def main(args=None, error_func=None):
 	import argparse
 	parser = argparse.ArgumentParser(
 		description='NaCl-based encryption tool.')
@@ -457,10 +509,6 @@ def main(args=None):
 			' Will fail with large stdin stream, as it requires'
 				' two-pass processing (and hence buffering) of data.')
 
-	parser.add_argument('--gen-pkid-cache', action='store_true',
-		help='Generate/print YAML "pkid_cache" section contents for all known keys and exit.'
-			' Will NOT update ghg.yaml files with these values, only print them to stdout.')
-
 	parser.add_argument('-p', '--pubkey',
 		nargs='?', const=True, metavar='key-id',
 		help='Print public key for specified key name/id and exit.'
@@ -471,55 +519,37 @@ def main(args=None):
 	parser.add_argument('--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
+
+	if not error_func:
+		error_func = lambda fmt,*a,**kw: parser.error(fmt.format(*a, **kw))
+
 	if opts.encrypt and opts.decrypt:
-		parser.error('Both --encrypt and --decrypt at the same time make no sense.')
+		error_func('Both --encrypt and --decrypt at the same time make no sense.')
 
 	if opts.genkey:
 		print('raw64-{}'.format(b64_encode(libnacl.crypto_box_keypair()[1])))
 		return
 
-	conf_paths = ['/etc/ghg.yaml', '~/.ghg.yaml'] + list(opts.conf or list())
-	conf, conf_srcs = dict(), filter(
-		lambda p: os.access(p, os.R_OK), map(expanduser, conf_paths) )
-	if not conf_srcs:
-		parser.error( 'No existing/accessible'
-			' conf-paths found, tried: {}'.format(', '.join(conf_paths)) )
-	for path in conf_srcs:
-		with open(path, 'rb') as src:
-			# if stat.S_IRWXO(os.fstat(src).st_mode):
-			# 	raise GHGError('Insecure (world-readable) mode for conf-path: {!r}'.format(p))
-			c = yaml_load(src)
-			for section, c in c.viewitems():
-				if c is None:
-					conf.pop(section, None)
-					continue
-				cs = conf[section] = dict()
-				for k, v in c.viewitems():
-					if v is None: cs.pop(k, None)
-					else: cs[k] = v
-	for k, v in conf['keys'].items():
-		if v.strip().startswith('link-'):
-			v = conf['keys'].get(v[5:])
-			if not v: del conf['keys'][k]
-			else: conf['keys'][k] = v
+	conf = conf_parse(['/etc/ghg.yaml', '~/.ghg.yaml'] + list(opts.conf or list()), error_func)
+	conf_keys = conf['keys']
+	conf_keys.update(it.ifilter( op.itemgetter(1),
+		((k, conf_key_spec(v)) for k,v in conf_keys.viewitems()) ))
+	conf_key_resolve_links(conf_keys)
+
+	key_src, key_dst = object(), object()
+	conf_keys[key_dst] = conf_key_resolve_links(conf_keys, conf['core']['key'])
+	conf_keys[key_src] = conf_keys[key_dst]\
+		if not conf['core'].get('key-src')\
+		else conf_key_resolve_links(conf_keys, conf['core']['key-src'])
 
 	stream_buff_len = 10 * 2**20 # 10 MiB
-	ghg = GHGCrypt(dict(
-		(pkid, conf['keys'].get(k))
-		for k, pkid in conf.get('pkid_cache', dict()).viewitems() ))
-
-	if opts.gen_pkid_cache:
-		pkid_cache = dict(pkid_cache=OrderedDict(
-			(k, ghg.key_pkid(key_spec=v)) for k, v in conf['keys'].viewitems() ))
-		print('# Put the following YAML as-is into one of the config files')
-		yaml_dump(pkid_cache, sys.stdout)
-		return
+	ghg = GHGCrypt()
 
 	if opts.pubkey:
-		k = opts.pubkey
-		if k is True: k = conf['core']['key']
-		print('pub64-{}'.format(b64_encode(ghg.key_parse(conf['keys'][k])['pk'])))
+		for key in conf_keys[opts.pubkey if opts.pubkey is not True else key_src]:
+			print('pub64-{}'.format(b64_encode(ghg.key_parse(key)['pk'])))
 		return
+
 
 	@contextmanager
 	def crypto_op_src(src_file):
@@ -535,10 +565,10 @@ def main(args=None):
 					src.rewind()
 					del buff
 				else: nonce_base = None
-				src_key_spec = conf['keys'][opts.key or conf['core']['key']]
-				dst_key_specs = [conf['keys'][conf['core']['key']]]\
-					if not opts.recipient else uniq_filter(
-						(conf['keys'][k] if not ghg.key_parse_chk(k, 'pub64') else k)
+				src_key_spec, = conf_keys[opts.key or key_src]
+				dst_key_specs = conf_keys[key_dst]\
+					if not opts.recipient else uniq_filter_flatten(
+						(conf_keys[k] if not ghg.key_parse_chk(k, 'pub64') else k)
 						for k in opts.recipient )
 				assert dst_key_specs
 				if len(dst_key_specs) == 1: src.buff_stop()
@@ -546,7 +576,7 @@ def main(args=None):
 					src, dst, src_key_spec, dst_key_specs, nonce_base )
 
 			else:
-				key_specs = uniq_filter([conf['keys'].get(conf['core']['key'])] + conf['keys'].values())
+				key_specs = uniq_filter_flatten([conf_keys[key_src], conf_keys.values()])
 				assert key_specs
 				src.buff_stop()
 				crypto_op_run = lambda dst: ghg.decrypt(src, dst, key_specs)
@@ -555,6 +585,7 @@ def main(args=None):
 			elif encrypt: dst_path = '{}.ghg'.format(src.name)
 			else: dst_path = src.name[:-4] if src.name.endswith('.ghg') else src.name
 			yield (crypto_op_run, dst_path)
+
 
 	if opts.path:
 		with crypto_op_src(open(opts.path, 'rb')) as (crypto_op_run, dst_path):

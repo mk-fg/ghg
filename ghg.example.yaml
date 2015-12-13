@@ -2,12 +2,13 @@
 core:
   key: mykey # name of the default key to use
 
-## pkid_cache can be generated using
-##  --gen-pkid-cache for decryption speedup with many keys.
-# pkid_cache:
+  ## key-src: key to use as --key (local secret key) with --encrypt by default.
+  ## Have to be specified only if "key" above points to multiple or public key(s).
+  # key-src: mykey
 
 keys:
-  # Hashed to pkid's (if not cached) in the same order, when needed
+  # When decrypting, hashed and checked to match pkid in the same order,
+  #  but with "key"/"key-src" from "core" section (see above) first
 
   ssh-host: ssh-/etc/ssh/ssh_host_ed25519_key # only if accessible
   ssh-user: ssh-~/.ssh/id_ed25519
@@ -15,10 +16,13 @@ keys:
   mykey: raw64-v81IAezQzuzZQ0e9LQk2eaMRNzTAyxFRAfW-qSK-svQ=
   mykey-on-remote: pub64-mIkC20NfVcFLgKJ5bm5ck93BB55R0XjXTElbtKZ6zSs=
 
-  backup: link-backup-hostX
+  backup:
+    - link-backup-hostX
+    - link-backup-hostY
   backup-hostX: pub64-DZqKsImH_Rizt38ariDw-jD-E9pXFbNQ38aoyKIIn2k=
+  backup-hostY: pub64-PddqJWLx1T-XWD_tnbjb-uWJNgp8muQFK_jHhflGOGo=
 
-  ## Value format is: { ssh | raw64 | pub64 | link }-{spec}
+  ## Key format is "{ ssh | raw64 | pub64 | link }-{spec}" or a list of such
   # mykey-a: raw64-gXNGcNgy22YxBTDb5wK0Cz8zpRNhjrs-aDLanbj22Fs=
   # mykey-b: ssh-~/.ssh/id_ed25519_mykey-b
-  # mykey-current: link-mykey-b
+  # mykey-current: [link-mykey-a, link-mykey-b]
