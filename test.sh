@@ -226,11 +226,19 @@ $ghg -d "$p".g2.ghg
 $ghg -r key-g2 -r key-4 <"$p" >"$p".g3.ghg
 $ghg -d "$p".g3.ghg
 
+if $ghg -k key-g1 <"$p" >"$p".g4.ghg 2>/dev/null; then die; fi
+if [[ -s "$p".g4.ghg ]]; then die; fi
+if $ghg -k key-g3 <"$p" >"$p".g4.ghg 2>/dev/null; then die; fi
+if [[ -s "$p".g4.ghg ]]; then die; fi
+$ghg -k key-g4 <"$p" >"$p".g4.ghg
+$ghg "$p".g4.ghg
+
 sha256 "$p" >"$p".chk
 sha256 "$p".g1 >>"$p".chk
 sha256 "$p".g2 >>"$p".chk
 sha256 "$p".g3 >>"$p".chk
-[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 4 ]] || { cat "$p".chk; die; }
+sha256 "$p".g4 >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 5 ]] || { cat "$p".chk; die; }
 
 $ghg -r key-g3 <"$p" >"$p".g1.ghg
 $ghg -r key-g3 -r key-4 <"$p" >"$p".g2.ghg
