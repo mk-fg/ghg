@@ -24,6 +24,7 @@ cat >"$tmp"/ghg.yaml <<EOF
 
 core:
   key: mykey
+  key-src: key-g4
 
 keys:
 
@@ -47,6 +48,10 @@ keys:
   key-g3:
     - pub64-PddqJWLx1T-XWD_tnbjb-uWJNgp8muQFK_jHhflGOGo=
     - pub64-DZqKsImH_Rizt38ariDw-jD-E9pXFbNQ38aoyKIIn2k=
+  key-g4:
+    - link-nx
+    - pub64-PddqJWLx1T-XWD_tnbjb-uWJNgp8muQFK_jHhflGOGo=
+    - link-mykey
 
 EOF
 ghg="./ghg -c $tmp/ghg.yaml"

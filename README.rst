@@ -46,11 +46,13 @@ ghg.example.yaml::
     ssh-user: ssh-~/.ssh/id_ed25519
 
     mykey: raw64-v81IAezQzuzZQ0e9LQk2eaMRNzTAyxFRAfW-qSK-svQ=
-    mykey-on-remote: pub64-mIkC20NfVcFLgKJ5bm5ck93BB55R0XjXTElbtKZ6zSs=
+    my-other-key: raw64-rdEpmXEehh61Nd1d08qL0CCjBzjQtzaXpN-BoTCvpVA=
+    some-key-on-remote: pub64-mIkC20NfVcFLgKJ5bm5ck93BB55R0XjXTElbtKZ6zSs=
 
     backup:
       - link-backup-hostX
       - link-backup-hostY
+      - raw64-M4GuROf3vNLZTAtHcgYPkO7gnC6sPFBSA67-CvV2Fc8=
     backup-hostX: pub64-DZqKsImH_Rizt38ariDw-jD-E9pXFbNQ38aoyKIIn2k=
     backup-hostY: pub64-PddqJWLx1T-XWD_tnbjb-uWJNgp8muQFK_jHhflGOGo=
 
@@ -65,7 +67,7 @@ Usage::
   % ghg -d secret-data.txt.ghg
   ## Works same as gpg, replacing source files, but with .ghg suffix
 
-  % ghg -e -r mykey-remote -r ssh-user secret-data.txt
+  % ghg -e -r some-key-on-remote -r ssh-user secret-data.txt
   ## Resulting file will be decryptable with any of the specified keys
 
   % ghg -e -r pub64-mIkC20NfVcFLgKJ5bm5ck93BB55R0XjXTElbtKZ6zSs= secret-data.txt
@@ -80,9 +82,9 @@ Usage::
   % ghg -se -r backup secret-data.txt
   ## -s/--stable uses hmac-sha256 of the plaintext as nonce
 
-  % ghg -p mykey
-  pub64-mIkC20NfVcFLgKJ5bm5ck93BB55R0XjXTElbtKZ6zSs=
-  ## Print pubkey (in "pub64-..." format) for specified secret key
+  % ghg -p my-other-key
+  pub64-itMXyr0tmn9HYz95YMPPLNmncE1bXQUnHK4qOco8bRQ=
+  ## Print pubkey(s) (in "pub64-..." format) for specified secret key
 
   % ghg -g
   raw64-GfJUQ51_BwWtaqZknIX0Lh129hh_T3eDKzpx3RwV77c=

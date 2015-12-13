@@ -429,7 +429,7 @@ def conf_parse(conf_paths, error_func):
 	for path in conf_srcs:
 		with open(path, 'rb') as src:
 			# if stat.S_IRWXO(os.fstat(src).st_mode):
-			# 	raise GHGError('Insecure (world-readable) mode for conf-path: {!r}'.format(p))
+			# 	error_func('Insecure (world-readable) mode for conf-path: {!r}', path)
 			c = yaml_load(src)
 			for section, c in c.viewitems():
 				if c is None:
@@ -536,14 +536,16 @@ def main(args=None, error_func=None):
 		((k, conf_key_spec(v)) for k,v in conf_keys.viewitems()) ))
 	conf_key_resolve_links(conf_keys)
 
-	key_src, key_dst = object(), object()
-	conf_keys[key_dst] = conf_key_resolve_links(conf_keys, conf['core']['key'])
-	conf_keys[key_src] = conf_keys[key_dst]\
-		if not conf['core'].get('key-src')\
-		else conf_key_resolve_links(conf_keys, conf['core']['key-src'])
-
 	stream_buff_len = 10 * 2**20 # 10 MiB
 	ghg = GHGCrypt()
+
+	key_src, key_dst = object(), object()
+	conf_keys[key_dst] = conf_key_resolve_links(conf_keys, conf['core']['key'])
+	conf_keys[key_src] = filter(
+		lambda k:not ghg.key_parse_chk(k, 'pub64'),
+		conf_keys[key_dst]
+			if not conf['core'].get('key-src')
+			else conf_key_resolve_links(conf_keys, conf['core']['key-src']) )
 
 	if opts.pubkey:
 		for key in conf_keys[opts.pubkey if opts.pubkey is not True else key_src]:
@@ -565,7 +567,14 @@ def main(args=None, error_func=None):
 					src.rewind()
 					del buff
 				else: nonce_base = None
-				src_key_spec, = conf_keys[opts.key or key_src]
+				src_key_spec = uniq_filter_flatten(conf_keys[opts.key or key_src])
+				if len(src_key_spec) != 1:
+					src_key_spec = list(k for k in src_key_spec if not ghg.key_parse_chk(k, 'pub64'))
+				if len(src_key_spec) != 1:
+					error_func( 'Unable to pick exactly one valid source (secret)'
+						' key spec (linked via "key"/"key-src": {})', len(src_key_spec) )
+				src_key_spec, = src_key_spec
+
 				dst_key_specs = conf_keys[key_dst]\
 					if not opts.recipient else uniq_filter_flatten(
 						(conf_keys[k] if not ghg.key_parse_chk(k, 'pub64') else k)
