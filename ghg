@@ -323,7 +323,7 @@ class GHGCrypt(object):
 				cache_spec_k = 'k-{}'.format(key_spec)
 				if cache_spec_k in self.pk_cache: return
 				key = self.key_parse(key_spec)
-				if 'sk' not in key:
+				if not key or 'sk' not in key:
 					self.pk_cache[cache_spec_k] = None
 					return
 				key_pkid = self.key_pkid(key)
