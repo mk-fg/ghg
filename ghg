@@ -11,7 +11,7 @@ import tempfile, hashlib, hmac
 
 import yaml
 import libnacl
-from libnacl.public import SecretKey, Box
+from libnacl.public import SecretKey
 from libnacl.utils import rand_nonce
 
 
@@ -388,9 +388,7 @@ class GHGCrypt(object):
 			head_ver, pk, nonce_base, pkid = int(head[1]),\
 				b64_decode(head[2]), b64_decode(head[3]), head[4]
 			key = self.key_pkid_lookup(pkid, key_specs)
-			if key:
-				sk = key['sk']
-				key_box, pt_sha256 = Box(sk, pk), hashlib.sha256()
+			if key: sk, pt_sha256 = key['sk'], hashlib.sha256()
 
 			n, cpt_last = 0, None
 			# p( 'dec - nb: {}, pk-src: {}, pk-dst: {}',
