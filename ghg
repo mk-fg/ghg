@@ -497,7 +497,7 @@ def main(args=None, error_func=None):
 			' Public key itself can also be specified in pub64-* format.'
 			' Can be specified multiple times to provide ciphertext for each key.')
 	parser.add_argument('-k', '--key', metavar='key-id',
-		help='Local secret key name/id to use in encryption.')
+		help='Local secret key name/id to use for decryption.')
 
 	parser.add_argument('-o', '--stdout', action='store_true',
 		help='Encrypt/decrypt to stdout, even when file path is specified.')
@@ -510,7 +510,9 @@ def main(args=None, error_func=None):
 	parser.add_argument('-p', '--pubkey',
 		nargs='?', const=True, metavar='key-id',
 		help='Print public key for specified key name/id and exit.'
-			' With no argument, pubkey for default key will be printed.')
+			' With no argument, pubkey for default key will be printed.'
+			' Private key (in the same format as output'
+				' by --genkey, i.e. raw64-*) can also be specified directly.')
 	parser.add_argument('-g', '--genkey', action='store_true',
 		help='Generate/print a new secret key and exit.')
 
@@ -546,7 +548,11 @@ def main(args=None, error_func=None):
 			else conf_key_resolve_links(conf_keys, conf['core']['key-src']) )
 
 	if opts.pubkey:
-		for key in conf_keys[opts.pubkey if opts.pubkey is not True else key_src]:
+		try: keys = conf_keys[opts.pubkey if opts.pubkey is not True else key_src]
+		except KeyError:
+			if not ghg.key_parse_chk(opts.pubkey, 'raw64'): raise
+			keys = [opts.pubkey]
+		for key in keys:
 			print('pub64-{}'.format(b64_encode(ghg.key_parse(key)['pk'])))
 		return
 
