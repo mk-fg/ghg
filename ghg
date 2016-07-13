@@ -495,9 +495,13 @@ def main(args=None, error_func=None):
 		action='append', metavar='key-id',
 		help='Public key name/id to encrypt to or decrypt with.'
 			' Public key itself can also be specified in pub64-* format.'
-			' Can be specified multiple times to provide ciphertext for each key.')
+			' Can be specified multiple times to provide ciphertext for each key.'
+			' Private raw64-* keys are not accepted here on purpose,'
+				' to avoid forming a habit of passing these on a command line,'
+				' use pub64-* keys (and -p option) and/or config file instead.')
 	parser.add_argument('-k', '--key', metavar='key-id',
-		help='Local secret key name/id to use for decryption.')
+		help='Local secret key name/id to use for encryption ops.'
+			' Same as with -r/--recipient option, direct raw64-* key strings are not allowed here.')
 
 	parser.add_argument('-o', '--stdout', action='store_true',
 		help='Encrypt/decrypt to stdout, even when file path is specified.')
@@ -512,7 +516,9 @@ def main(args=None, error_func=None):
 		help='Print public key for specified key name/id and exit.'
 			' With no argument, pubkey for default key will be printed.'
 			' Private key (in the same format as output'
-				' by --genkey, i.e. raw64-*) can also be specified directly.')
+				' by --genkey, i.e. raw64-*) can also be specified directly,'
+				' but this should never be done on a regular basis, as such '
+				' cli argument can be visible to every pid (and psacct-like app) in the system.')
 	parser.add_argument('-g', '--genkey', action='store_true',
 		help='Generate/print a new secret key and exit.')
 
