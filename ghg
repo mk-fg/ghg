@@ -518,7 +518,9 @@ def main(args=None, error_func=None):
 			' Private key (in the same format as output'
 				' by --genkey, i.e. raw64-*) can also be specified directly,'
 				' but this should never be done on a regular basis, as such '
-				' cli argument can be visible to every pid (and psacct-like app) in the system.')
+				' cli argument can be visible to every pid (and psacct-like app) in the system.'
+			' If "-" is specified as argument, argument (key id or key)'
+				' will be read from stdin (should be preferrable with raw keys).')
 	parser.add_argument('-g', '--genkey', action='store_true',
 		help='Generate/print a new secret key and exit.')
 
@@ -554,6 +556,7 @@ def main(args=None, error_func=None):
 			else conf_key_resolve_links(conf_keys, conf['core']['key-src']) )
 
 	if opts.pubkey:
+		if opts.pubkey == '-': opts.pubkey = sys.stdin.read().strip()
 		try: keys = conf_keys[opts.pubkey if opts.pubkey is not True else key_src]
 		except KeyError:
 			if not ghg.key_parse_chk(opts.pubkey, 'raw64'): raise
