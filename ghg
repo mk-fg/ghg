@@ -487,7 +487,7 @@ def main(args=None, error_func=None):
 			' Own pubkey is used by default,'
 				' use -r/--recipient option to specify pubkey.')
 	parser.add_argument('-d', '--decrypt', action='store_true',
-		help='Encrypt specified file or stdin stream.'
+		help='Decrypt specified file or stdin stream.'
 			' When decrypting to stdout, authentication/integrity is'
 				' indicated by exit code (!!!), so ALWAYS CHECK IF EXIT CODE IS 0.')
 
