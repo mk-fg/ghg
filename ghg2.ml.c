@@ -39,6 +39,7 @@ value nacl_init() {
 value nacl_key_load(value v_key_b64) {
 	// Decodes base64 key string into a sodium_malloc'ed pointer
 	CAMLparam1(v_key_b64);
+	char *err;
 	size_t key_b64_len = caml_string_length(v_key_b64);
 	unsigned char *key_b64 = String_val(v_key_b64);
 	const char *key_b64_end;
@@ -46,9 +47,13 @@ value nacl_key_load(value v_key_b64) {
 	unsigned char *key_bin = sodium_malloc(key_bs);
 	if (sodium_base642bin( key_bin, key_bs,
 			key_b64, key_b64_len, NULL, &key_bin_len, &key_b64_end, b64_type ))
-		caml_failwith("sodium_base642bin failed");
-	if (key_bin_len != key_bs) caml_failwith("key length mismatch");
+		{ err = "sodium_base642bin failed"; goto fail_with_err; }
+	if (key_bin_len != key_bs) { err = "key length mismatch"; goto fail_with_err; }
 	CAMLreturn(caml_copy_nativeint((intptr_t) key_bin));
+
+	fail_with_err:
+	sodium_free(key_bin);
+	caml_failwith(err);
 }
 
 value nacl_key_free(value v_key) {
@@ -62,7 +67,7 @@ value nacl_key_sk_to_pk(value v_key_sk) {
 	unsigned char *key_sk = (unsigned char *) Nativeint_val(v_key_sk);
 	unsigned char *key_pk = sodium_malloc(key_bs);
 	if (crypto_scalarmult_base(key_pk, key_sk))
-		caml_failwith("crypto_scalarmult_base failed");
+		{ sodium_free(key_pk); caml_failwith("crypto_scalarmult_base failed"); }
 	CAMLreturn(caml_copy_nativeint((intptr_t) key_pk));
 }
 
@@ -95,31 +100,42 @@ value nacl_key_encrypt(value v_sk, value v_pk, value v_key) {
 
 value nacl_encrypt(value v_key, value v_fd_src, value v_fd_dst) {
 	CAMLparam3(v_key, v_fd_src, v_fd_dst);
+	char *err;
 	unsigned char *key = (unsigned char *) Nativeint_val(v_key);
-	int fd_src = Int_val(v_fd_src);
-	int fd_dst = Int_val(v_fd_dst);
+	int fd_src = -1, fd_dst = -1; FILE *fp_src, *fp_dst;
 
 	unsigned char buff_in[enc_bs];
 	unsigned char buff_out[enc_bs + crypto_secretstream_xchacha20poly1305_ABYTES];
 	size_t hdr_len = crypto_secretstream_xchacha20poly1305_HEADERBYTES;
 	unsigned char hdr[hdr_len];
 	crypto_secretstream_xchacha20poly1305_state st;
-	unsigned long long out_len;
-	size_t in_len;
-	int eof;
-	unsigned char tag;
+	unsigned long long out_len; size_t in_len; int eof; unsigned char tag;
 
-	crypto_secretstream_xchacha20poly1305_init_push(&st, hdr, key);
-	if (write(fd_dst, hdr, hdr_len) != hdr_len) caml_failwith("enc header write failed");
+	fd_src = dup(Int_val(v_fd_src)); fd_dst = dup(Int_val(v_fd_dst));
+	if (fd_src < 0 || fd_dst < 0) { err = "enc fd dup failed"; goto fail_with_err; }
+	fp_src = fdopen(Int_val(v_fd_src), "r"); fp_dst = fdopen(Int_val(v_fd_dst), "w");
+	if (!fp_src || !fp_dst) { err = "enc fdopen failed"; goto fail_with_err; }
+
+	if (crypto_secretstream_xchacha20poly1305_init_push(&st, hdr, key))
+		{ err = "enc init_push failed"; goto fail_with_err; }
+	fwrite(hdr, 1, hdr_len, fp_dst);
+	if (feof(fp_dst) || ferror(fp_dst)) { err = "enc header write failed"; goto fail_with_err; }
 	do {
-		in_len = read(fd_src, buff_in, enc_bs);
-		if (in_len < 0) caml_failwith("enc read failed");
-		eof = in_len < enc_bs;
+		in_len = fread(buff_in, 1, enc_bs, fp_src);
+		eof = feof(fp_src);
 		tag = eof ? crypto_secretstream_xchacha20poly1305_TAG_FINAL : 0;
-		crypto_secretstream_xchacha20poly1305_push(
-			&st, buff_out, &out_len, buff_in, in_len, NULL, 0, tag );
-		if (write(fd_dst, buff_out, out_len) != out_len) caml_failwith("enc block write failed");
+		if (crypto_secretstream_xchacha20poly1305_push(
+				&st, buff_out, &out_len, buff_in, in_len, NULL, 0, tag ))
+			{ err = "enc push failed"; goto fail_with_err; }
+		fwrite(buff_out, 1, (size_t) out_len, fp_dst);
+		if (ferror(fp_src) || feof(fp_dst) || ferror(fp_dst)) { err = "enc i/o error"; goto fail_with_err; }
 	} while (!eof);
 
+	fclose(fp_src); fclose(fp_dst);
 	CAMLreturn(Val_unit);
+
+	fail_with_err:
+	if (fp_src) fclose(fp_src); else if (fd_src >= 0) close(fd_src);
+	if (fp_dst) fclose(fp_dst); else if (fd_dst >= 0) close(fd_dst);
+	caml_failwith(err);
 }
