@@ -98,10 +98,10 @@ value nacl_key_encrypt(value v_sk, value v_pk, value v_key) {
 	CAMLreturn(caml_alloc_initialized_string(ct_b64_len-1, ct_b64));
 }
 
-value nacl_encrypt(value v_key, value v_fd_src, value v_fd_dst) {
-	CAMLparam3(v_key, v_fd_src, v_fd_dst);
+value nacl_encrypt(value v_key, value v_chunk, value v_fd_src, value v_fd_dst) {
+	CAMLparam4(v_key, v_chunk, v_fd_src, v_fd_dst);
 	char *err;
-	unsigned char *key = (unsigned char *) Nativeint_val(v_key);
+	unsigned char *chunk, *key = (unsigned char *) Nativeint_val(v_key);
 	int fd_src = -1, fd_dst = -1; FILE *fp_src, *fp_dst;
 
 	unsigned char buff_in[enc_bs];
@@ -120,9 +120,18 @@ value nacl_encrypt(value v_key, value v_fd_src, value v_fd_dst) {
 		{ err = "enc init_push failed"; goto fail_with_err; }
 	fwrite(hdr, 1, hdr_len, fp_dst);
 	if (feof(fp_dst) || ferror(fp_dst)) { err = "enc header write failed"; goto fail_with_err; }
+
+	in_len = caml_string_length(v_chunk);
+	if (in_len > enc_bs) { err = "enc bug - initial chunk too large"; goto fail_with_err; }
+	if (in_len > 0) chunk = String_val(v_chunk);
+
 	do {
-		in_len = fread(buff_in, 1, enc_bs, fp_src);
-		eof = feof(fp_src);
+		if (!chunk) {
+			in_len = fread(buff_in, 1, enc_bs, fp_src);
+			eof = feof(fp_src); }
+		else {
+			memcpy(buff_in, chunk, in_len);
+			chunk = NULL; }
 		tag = eof ? crypto_secretstream_xchacha20poly1305_TAG_FINAL : 0;
 		if (crypto_secretstream_xchacha20poly1305_push(
 				&st, buff_out, &out_len, buff_in, in_len, NULL, 0, tag ))
