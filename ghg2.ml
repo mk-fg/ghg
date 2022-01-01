@@ -66,15 +66,19 @@ let () =
 (* NaCl bindings from ghg2.ml.c *)
 type nacl_constants_record = {key_len: int} [@@boxed]
 external nacl_init : unit -> nacl_constants_record = "nacl_init"
+external nacl_b64_to_string : string -> int -> string = "nacl_b64_to_string"
+external nacl_string_to_b64 : string -> string = "nacl_string_to_b64"
 external nacl_key_load : string -> nativeint = "nacl_key_load"
 external nacl_key_free : nativeint -> unit = "nacl_key_free"
 external nacl_key_sk_to_pk : nativeint -> nativeint = "nacl_key_sk_to_pk"
 external nacl_key_b64 : nativeint -> string = "nacl_key_b64"
+external nacl_key_hash : nativeint -> string = "nacl_key_hash"
 external nacl_key_gen : unit -> nativeint = "nacl_key_gen"
 external nacl_key_encrypt : nativeint -> nativeint -> nativeint -> string = "nacl_key_encrypt"
 external nacl_key_decrypt : nativeint -> string -> nativeint = "nacl_key_decrypt"
 external nacl_encrypt : nativeint -> string -> int -> int -> unit = "nacl_encrypt"
 external nacl_decrypt : nativeint -> int -> int -> unit = "nacl_decrypt"
+external nacl_cct_decrypt : nativeint -> nativeint -> string -> int -> string -> string = "nacl_cct_decrypt"
 
 let nacl = nacl_init()
 
@@ -128,10 +132,12 @@ let encrypt key key_encs chunk0 fdesc_src fdesc_dst =
 
 
 let decrypt sk fdesc_src fdesc_dst =
+	(* XXX: use sk_list here instead of a single one *)
 	let line_buff = Bytes.create header_line_len in
 	let rec read_line n =
 		let m = try eintr_loop (Unix.read fdesc_src line_buff n) 1
-			with Invalid_argument err -> raise (DecryptFail (fmt "too long key line [pos=%d]" n)) in
+			with Invalid_argument err ->
+				raise (DecryptFail (fmt "too long key line [pos=%d]" n)) in
 		if m = 0 || (Bytes.get line_buff n) = '\n'
 			then Bytes.sub_string line_buff 0 n else read_line (n + 1) in
 	let rec read_key sk key =
@@ -146,6 +152,45 @@ let decrypt sk fdesc_src fdesc_dst =
 	let key = match read_key sk 0n with
 		| 0n -> raise (DecryptFail "key mismatch") | key -> key in
 	nacl_decrypt key (fdesc_to_int fdesc_src) (fdesc_to_int fdesc_dst)
+
+
+let decrypt_v1 sk fdesc_src fdesc_dst =
+	(* XXX: use sk_list here instead of a single one *)
+	let src = Unix.in_channel_of_descr fdesc_src in
+	let dst = Unix.out_channel_of_descr fdesc_dst in
+	let input_be_int n =
+		let res = ref 0 in
+		let rec apply_bytes n =
+			let byte = input_byte src in
+			res := Int.logor (Int.shift_left !res 8) byte;
+			if n = 1 then !res else apply_bytes (n - 1) in
+		apply_bytes n in
+	let rec cct_skip () =
+		let cct_len = input_be_int 4 in
+		let cpt_len = input_be_int 4 in
+		let _cct_skip = really_input_string src cct_len in
+		if cpt_len = 0 then () else cct_skip () in
+	let rec cct_dec n nonce pk =
+		let cct_len = input_be_int 4 in
+		let cpt_len = input_be_int 4 in
+		let cct = really_input_string src cct_len in
+		if cpt_len = 0 then () else
+			let cpt = nacl_cct_decrypt sk pk nonce n cct in
+			output_string dst cpt;
+			cct_dec (n + 1) nonce pk in
+	let rec cct pk_id =
+		let header =
+			try List.rev (String.split_on_char ' ' (input_line src))
+			with End_of_file -> raise (DecryptFail "key mismatch") in
+		let pk_b64, nonce_b64, cct_pk_id =
+			List.(nth header 2, nth header 1, nth header 0) in
+		if cct_pk_id = pk_id then
+			let nonce = nacl_b64_to_string nonce_b64 16 in
+			let pk = nacl_key_load pk_b64 in
+			Fun.protect ~finally:(fun () -> nacl_key_free pk) (fun () -> cct_dec 0 nonce pk)
+		else (cct_skip (); cct pk_id) in
+	let pk = nacl_key_sk_to_pk sk in
+	Fun.protect ~finally:(fun () -> nacl_key_free pk) (fun () -> cct (nacl_key_hash pk))
 
 
 let () =
@@ -169,9 +214,11 @@ let () =
 		| m -> magic_read (n + m) in
 	match magic_read 0 with
 
-	| s when s = magic_v1 -> raise (Failure "magic_v1 decrypt")
-		(* for box_dst_pk in box_dst_pk_list: *)
-		(* readline -> src_pk, nonce_16B, dst_pkid_8B *)
+	| s when s = magic_v1 ->
+		let sk = parse_key "-k/--key" true !cli_key_sk in
+		Fun.protect
+			~finally:(fun () -> nacl_key_free sk)
+			(fun () -> decrypt_v1 sk Unix.stdin Unix.stdout)
 
 	| s when s = magic_v2 ->
 		let sk = parse_key "-k/--key" true !cli_key_sk in

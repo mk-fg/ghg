@@ -36,14 +36,39 @@ value nacl_init() {
 	CAMLreturn(v_consts);
 }
 
+value nacl_b64_to_string(value v_b64, value v_len) {
+	// Load base64-string to a string of specified (expected) length
+	CAMLparam1(v_b64);
+	unsigned char *b64 = String_val(v_b64);
+	int bin_len = Int_val(v_len);
+	unsigned char bin[bin_len];
+	const char *b64_end; size_t bin_len_dec;
+	if (sodium_base642bin( bin, bin_len,
+			b64, caml_string_length(v_b64),
+			NULL, &bin_len_dec, &b64_end, b64_type ))
+		caml_failwith("sodium_base642bin failed");
+	if (bin_len_dec != bin_len) caml_failwith("length mismatch");
+	CAMLreturn(caml_alloc_initialized_string(bin_len, bin));
+}
+
+value nacl_string_to_b64(value v_bin) {
+	// Return base64-string of a string
+	CAMLparam1(v_bin);
+	unsigned char *bin = String_val(v_bin);
+	int bin_len = caml_string_length(v_bin);
+	int b64_len = sodium_base64_encoded_len(bin_len, b64_type);
+	unsigned char b64[b64_len];
+	sodium_bin2base64(b64, b64_len, bin, bin_len, b64_type);
+	CAMLreturn(caml_alloc_initialized_string(b64_len-1, b64));
+}
+
 value nacl_key_load(value v_key_b64) {
-	// Decodes base64 key string into a sodium_malloc'ed pointer
+	// Load base64 key string into a sodium_malloc'ed nativeint pointer
 	CAMLparam1(v_key_b64);
 	char *err;
 	size_t key_b64_len = caml_string_length(v_key_b64);
 	unsigned char *key_b64 = String_val(v_key_b64);
-	const char *key_b64_end;
-	size_t key_len;
+	const char *key_b64_end; size_t key_len;
 	unsigned char *key = sodium_malloc(key_bs);
 	if (sodium_base642bin( key, key_bs,
 			key_b64, key_b64_len, NULL, &key_len, &key_b64_end, b64_type ))
@@ -78,6 +103,21 @@ value nacl_key_b64(value v_key) {
 	unsigned char key_b64[key_b64_len];
 	sodium_bin2base64(key_b64, key_b64_len, key, key_bs, b64_type);
 	CAMLreturn(caml_alloc_initialized_string(key_b64_len-1, key_b64));
+}
+
+value nacl_key_hash(value v_key) {
+	CAMLparam1(v_key);
+	char *err;
+	unsigned char *key = (unsigned char *) Nativeint_val(v_key);
+	size_t hash_len = crypto_generichash_BYTES;
+	unsigned char hash[hash_len];
+	if (crypto_generichash(hash, hash_len, key, key_bs, NULL, 0))
+		caml_failwith("crypto_generichash failed");
+	hash_len = 6;
+	int hash_b64_len = sodium_base64_encoded_len(hash_len, b64_type);
+	unsigned char hash_b64[hash_b64_len];
+	sodium_bin2base64(hash_b64, hash_b64_len, hash, hash_len, b64_type);
+	CAMLreturn(caml_alloc_initialized_string(8, hash_b64));
 }
 
 value nacl_key_gen() {
@@ -232,4 +272,37 @@ value nacl_decrypt(value v_key, value v_fd_src, value v_fd_dst) {
 	if (fp_src) fclose(fp_src); else if (fd_src >= 0) close(fd_src);
 	if (fp_dst) fclose(fp_dst); else if (fd_dst >= 0) close(fd_dst);
 	caml_failwith(err);
+}
+
+value nacl_cct_decrypt(
+		value v_sk, value v_pk, value v_nonce, value v_n, value v_ct ) {
+	// Decode ciphertext chunk in an old py2 ghg script format
+	CAMLparam5(v_sk, v_pk, v_nonce, v_n, v_ct);
+	unsigned char *key_sk = (unsigned char *) Nativeint_val(v_sk);
+	unsigned char *key_pk = (unsigned char *) Nativeint_val(v_pk);
+	unsigned char *nonce_base = String_val(v_nonce);
+	unsigned char *ct = String_val(v_ct);
+	int ct_len = caml_string_length(v_ct);
+	uint32_t n = Int_val(v_n);
+
+	int nonce_base_len = 16;
+	if (caml_string_length(v_nonce) != nonce_base_len)
+		caml_failwith("cct-dec nonce length mismatch");
+	unsigned char nonce[nonce_base_len + 8];
+	memcpy(nonce, nonce_base, nonce_base_len);
+	unsigned char *nonce_n = nonce + nonce_base_len;
+	nonce_n[0] = nonce_n[1] = nonce_n[2] = nonce_n[3] = 0;
+	nonce_n[4] = (char) (n >> 24) & 0xff; nonce_n[5] = (char) (n >> 16) & 0xff;
+	nonce_n[6] = (char) (n >> 8) & 0xff; nonce_n[7] = (char) n & 0xff;
+
+	int cb_pad = crypto_box_BOXZEROBYTES, cb_skip = crypto_box_ZEROBYTES;
+	int cb_len = cb_pad + ct_len;
+	unsigned char buff_in[cb_len];
+	memset(buff_in, 0, cb_pad);
+	memcpy(buff_in + cb_pad, ct, ct_len);
+	unsigned char buff_out[cb_len];
+	if (crypto_box_open(buff_out, buff_in, cb_len, nonce, key_pk, key_sk))
+		caml_failwith("cct-dec crypto_box_open failed");
+
+	CAMLreturn(caml_alloc_initialized_string(cb_len - cb_skip, buff_out + cb_skip));
 }
