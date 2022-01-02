@@ -57,6 +57,27 @@ value nacl_string_to_b64(value v_bin) {
 	CAMLreturn(caml_alloc_initialized_string(b64_len-1, b64));
 }
 
+value nacl_gen_key() {
+	CAMLparam0();
+	unsigned char *key = sodium_malloc(key_bs);
+	crypto_secretstream_xchacha20poly1305_keygen(key);
+	CAMLreturn(caml_copy_nativeint((intptr_t) key));
+}
+
+value nacl_gen_key_pair() {
+	CAMLparam0();
+	unsigned char *key_sk = sodium_malloc(key_bs);
+	unsigned char *key_pk = sodium_malloc(key_bs);
+	if (crypto_box_keypair(key_pk, key_sk)) {
+		sodium_free(key_pk); sodium_free(key_sk);
+		caml_failwith("crypto_box_keypair failed"); }
+	CAMLlocal1(v_kp);
+	v_kp = caml_alloc(2, 0);
+	Store_field(v_kp, 0, caml_copy_nativeint((intptr_t) key_sk));
+	Store_field(v_kp, 1, caml_copy_nativeint((intptr_t) key_pk));
+	CAMLreturn(v_kp);
+}
+
 value nacl_key_load(value v_key_b64) {
 	// Load base64 key string into a sodium_malloc'ed nativeint pointer
 	CAMLparam1(v_key_b64);
@@ -102,7 +123,6 @@ value nacl_key_b64(value v_key) {
 
 value nacl_key_hash(value v_key) {
 	CAMLparam1(v_key);
-	char *err;
 	unsigned char *key = (unsigned char *) Nativeint_val(v_key);
 	size_t hash_len = crypto_generichash_BYTES;
 	unsigned char hash[hash_len];
@@ -115,29 +135,25 @@ value nacl_key_hash(value v_key) {
 	CAMLreturn(caml_alloc_initialized_string(8, hash_b64));
 }
 
-value nacl_key_gen() {
-	CAMLparam0();
-	unsigned char *key = sodium_malloc(key_bs);
-	crypto_secretstream_xchacha20poly1305_keygen(key);
-	CAMLreturn(caml_copy_nativeint((intptr_t) key));
-}
-
 value nacl_key_encrypt(value v_sk, value v_pk, value v_key) {
 	CAMLparam3(v_sk, v_pk, v_key);
 	unsigned char *key_sk = (unsigned char *) Nativeint_val(v_sk);
 	unsigned char *key_pk = (unsigned char *) Nativeint_val(v_pk);
 	unsigned char *key = (unsigned char *) Nativeint_val(v_key);
+
 	int nct_len = key_bs + nonce_len + ct_len;
 	unsigned char nct[nct_len];
-	memcpy(nct, key_pk, key_bs);
+	int ct_b64_len = sodium_base64_encoded_len(nct_len, b64_type);
+	unsigned char ct_b64[ct_b64_len];
+
+	if (crypto_scalarmult_base(nct, key_sk))
+		caml_failwith("crypto_scalarmult_base failed");
 	randombytes_buf(nct + key_bs, nonce_len);
 
 	if (crypto_box_easy( nct + key_bs + nonce_len,
 			key, key_bs, nct + key_bs, key_pk, key_sk ))
 		caml_failwith("crypto_box_easy failed");
 
-	int ct_b64_len = sodium_base64_encoded_len(nct_len, b64_type);
-	unsigned char ct_b64[ct_b64_len];
 	sodium_bin2base64(ct_b64, ct_b64_len, nct, nct_len, b64_type);
 	CAMLreturn(caml_alloc_initialized_string(ct_b64_len-1, ct_b64));
 }

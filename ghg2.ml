@@ -11,13 +11,15 @@
  * Debug: OCAMLRUNPARAM=b ./ghg2 ...
  *)
 
-let cli_conf = ref "/etc/ghg.yaml"
+let cli_conf = ref "/etc/ghg.yamlx"
 let cli_enc = ref false
 let cli_dec = ref false
-let cli_key_sk = ref ""
+let cli_key_sk = ref []
+let cli_key_sk_add = (fun k -> cli_key_sk := !cli_key_sk @ [k])
 let cli_key_pk = ref []
 let cli_key_pk_add = (fun k -> cli_key_pk := !cli_key_pk @ [k])
 let cli_key_convert = ref false
+let cli_key_gen = ref false
 let cli_files = ref []
 
 let () =
@@ -40,21 +42,23 @@ let () =
 
 			("-r", Arg.String cli_key_pk_add, " ");
 			("--recipient", Arg.String cli_key_pk_add,
-				t^"Public key name/id to encrypt to or decrypt with." ^
-				t^"Public key itself can also be specified in pub64-* format." ^
+				t^"Public key name/spec(s) to encrypt to." ^
 				t^"Can be specified multiple times to encrypt for each of the keys." ^
-				t^"Private raw64-* keys are not accepted here on purpose," ^
-				t^" to avoid forming a habit of passing these on a command line," ^
-				t^" use pub64-* keys and/or config file instead.");
-			("-k", Arg.Set_string cli_key_sk, " ");
-			("--key", Arg.Set_string cli_key_sk,
-				t^"Local secret key name/id to use for encryption ops." ^
-				t^"Same as with -r/--recipient option, raw64-* key strings are not allowed here.\n");
+				t^"If this option is used, only specified keys will be used as destination," ^
+				t^" -k/--key is not automatically added to them, i.e. won't be able to decrypt output." ^
+				t^"sk64.* keys can be used here, but shouldn't be - use pk64.* and/or config file.");
+			("-k", Arg.String cli_key_sk_add, " ");
+			("--key", Arg.String cli_key_sk_add,
+				t^"Local secret key name/spec(s) to use for encryption ops. Can be used multiple times." ^
+				t^"Using the option disregards default key specs in the config file, if any." ^
+				t^"Same as with -r/--recipient option, use config for sk64.* keys - command args are not secret.\n");
 
 			("-p", Arg.Set cli_key_convert, " ");
 			("--pubkey", Arg.Set cli_key_convert,
-				t^"Print public key for specified -k/--key, or default configured key.\n");
-			(* XXX: -g/--genkey option *)
+				t^"Print public key for specified -k/--key, or default configured key and exit.");
+			("-g", Arg.Set cli_key_gen, " ");
+			("--genkey", Arg.Set cli_key_gen,
+				t^"Generate/print new random private key and exit.\n");
 
 			("-h", Arg.Set help, " "); ("-help", Arg.Set help, " ") ] in
 	let usage_msg = ("Usage: " ^ Sys.argv.(0) ^ " [opts] [file ...]\
@@ -68,12 +72,13 @@ type nacl_constants_record = {key_len: int} [@@boxed]
 external nacl_init : unit -> nacl_constants_record = "nacl_init"
 external nacl_b64_to_string : string -> int -> string = "nacl_b64_to_string"
 external nacl_string_to_b64 : string -> string = "nacl_string_to_b64"
+external nacl_gen_key : unit -> nativeint = "nacl_gen_key"
+external nacl_gen_key_pair : unit -> (nativeint * nativeint) = "nacl_gen_key_pair"
 external nacl_key_load : string -> nativeint = "nacl_key_load"
 external nacl_key_free : nativeint -> unit = "nacl_key_free"
 external nacl_key_sk_to_pk : nativeint -> nativeint = "nacl_key_sk_to_pk"
 external nacl_key_b64 : nativeint -> string = "nacl_key_b64"
 external nacl_key_hash : nativeint -> string = "nacl_key_hash"
-external nacl_key_gen : unit -> nativeint = "nacl_key_gen"
 external nacl_key_encrypt : nativeint -> nativeint -> nativeint -> string = "nacl_key_encrypt"
 external nacl_key_decrypt : nativeint -> string -> nativeint = "nacl_key_decrypt"
 external nacl_encrypt : nativeint -> string -> int -> int -> unit = "nacl_encrypt"
@@ -99,25 +104,31 @@ exception KeyParseFail of string
 exception DecryptFail of string
 
 let parse_key =
-	let re_key_pub64, re_key_raw64 =
-		Str.regexp "^pub64-\\(.*\\)$", Str.regexp "^raw64-\\(.*\\)$" in
+	let re_pk64, re_sk64 =
+		Str.regexp "^pk64.\\(.*\\)$", Str.regexp "^sk64.\\(.*\\)$" in
 	let parse_key_b64 spec =
 		try nacl_key_load spec
 		with Failure err -> raise (KeyParseFail err) in
 	fun key_name is_sk spec ->
 		(* XXX: also lookup/translate keys from flattened config here *)
 		try
-			let pk = if Str.string_match re_key_pub64 spec 0
+			let pk = if Str.string_match re_pk64 spec 0
 				then parse_key_b64 (Str.matched_group 1 spec) else 0n in
-			let sk = if Str.string_match re_key_raw64 spec 0
+			let sk = if Str.string_match re_sk64 spec 0
 				then parse_key_b64 (Str.matched_group 1 spec) else 0n in
 			if pk = 0n && sk = 0n then raise (KeyParseFail "unknown key format");
 			if is_sk && sk = 0n then raise (KeyParseFail "secret key is required");
 			if is_sk then sk else if pk <> 0n then pk else nacl_key_sk_to_pk sk
 		with KeyParseFail err -> raise (KeyParseFail (fmt "%s (%s)" err key_name))
 
+let parse_key_list keys key_name is_sk =
+	let key_list = ref [] in
+	try List.iteri ( fun n k -> key_list :=
+		!key_list @ [parse_key (fmt "%s #%d" key_name (n + 1)) is_sk k] ) keys; !key_list
+	with e -> List.iter nacl_key_free !key_list; raise e
 
-let encrypt key key_encs chunk0 fdesc_src fdesc_dst =
+
+let encrypt key key_slots chunk0 fdesc_src fdesc_dst =
 	let buff = Bytes.create header_line_len in
 	let write_line s =
 		let s_len = String.length s in
@@ -126,7 +137,7 @@ let encrypt key key_encs chunk0 fdesc_src fdesc_dst =
 		if (Unix.write fdesc_dst buff 0 buff_len) < buff_len
 			then raise (Failure "Write to destination file/fd failed") in
 	write_line (magic_v2 ^ "-");
-	List.iter write_line key_encs;
+	List.iter write_line key_slots;
 	write_line header_end;
 	nacl_encrypt key chunk0 (fdesc_to_int fdesc_src) (fdesc_to_int fdesc_dst)
 
@@ -203,14 +214,20 @@ let decrypt_v1 sk_list fdesc_src fdesc_dst =
 let () =
 	(* XXX: implement src/dst file handling *)
 	(* XXX: use keys from config file, load proper sk_list *)
-	if !cli_key_sk = "" then ( prerr_endline (* XXX *)
+	if (List.length !cli_key_sk) = 0 then ( prerr_endline (* XXX *)
 		"ERROR: -k/--key option is required, as -c/--conf is not implemented"; exit 1 );
 
-	if !cli_key_convert then
-		let pk = parse_key "-k/--key" false !cli_key_sk in
-		Fun.protect
-			~finally:(fun () -> nacl_key_free pk)
-			(fun () -> print_endline ("pub64-" ^ (nacl_key_b64 pk)); exit 0)
+	if !cli_key_gen then
+		let sk, pk = nacl_gen_key_pair () in
+		Fun.protect ( fun () ->
+				print_endline ("sk64." ^ (nacl_key_b64 sk));
+				if !cli_key_convert then print_endline ("pk64." ^ (nacl_key_b64 pk)); exit 0 )
+			~finally:(fun () -> nacl_key_free sk; nacl_key_free pk)
+	else if !cli_key_convert then
+		let pk_list = parse_key_list !cli_key_sk "-k/--key" false in
+		Fun.protect ( fun () -> List.iter (fun pk ->
+				print_endline ("pk64." ^ (nacl_key_b64 pk))) pk_list; exit 0 )
+			~finally:(fun () -> List.iter nacl_key_free pk_list)
 	else
 
 	let magic = Bytes.create magic_len in
@@ -222,29 +239,26 @@ let () =
 	match magic_read 0 with
 
 	| s when s = magic_v1 ->
-		let sk_list = [parse_key "-k/--key" true !cli_key_sk] in
+		let sk_list = parse_key_list !cli_key_sk "-k/--key" true in
 		Fun.protect
-			~finally:(fun () -> List.iter nacl_key_free sk_list)
 			(fun () -> decrypt_v1 sk_list Unix.stdin Unix.stdout)
+			~finally:(fun () -> List.iter nacl_key_free sk_list)
 
 	| s when s = magic_v2 ->
-		let sk_list = [parse_key "-k/--key" true !cli_key_sk] in
+		let sk_list = parse_key_list !cli_key_sk "-k/--key" true in
 		Fun.protect
-			~finally:(fun () -> List.iter nacl_key_free sk_list)
 			(fun () -> decrypt sk_list Unix.stdin Unix.stdout)
+			~finally:(fun () -> List.iter nacl_key_free sk_list)
 
 	| s ->
-		(* XXX: bark at raw64- keys in pk_list when config will be implemented *)
 		if (List.length !cli_key_pk) = 0 then ( prerr_endline (* XXX *)
 			"ERROR: -r/--recipient option is required, as -c/--conf is not implemented"; exit 1 );
-		let key = nacl_key_gen () in
-		let pk_list = ref [] in
-		Fun.protect
-			~finally:(fun () -> List.iter (fun k -> nacl_key_free k) !pk_list)
-			( fun () ->
-				pk_list := [parse_key "-k/--key" true !cli_key_sk];
-				List.iteri ( fun n k -> pk_list :=
-					!pk_list @ [parse_key (fmt "-r/--recipient #%d" (n + 1)) false k] ) !cli_key_pk;
-				let sk, pk_list = List.(hd !pk_list, tl !pk_list) in
-				let key_encs = List.map (fun pk -> nacl_key_encrypt sk pk key) pk_list in
-				encrypt key key_encs s Unix.stdin Unix.stdout )
+		let key = nacl_gen_key () in
+		let sk_list, pk_list = ref [], ref [] in
+		Fun.protect ( fun () ->
+				sk_list := parse_key_list !cli_key_sk "-k/--key" true;
+				pk_list := parse_key_list !cli_key_pk "-r/--recipient" false;
+				let sk = List.nth !sk_list 0 in (* no need for >1 sk, as its pk is embedded in the slot *)
+				let key_slots = List.map (fun pk -> nacl_key_encrypt sk pk key) !pk_list in
+				encrypt key key_slots s Unix.stdin Unix.stdout )
+			~finally:(fun () -> List.iter nacl_key_free (!sk_list @ !pk_list))
