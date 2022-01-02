@@ -78,7 +78,7 @@ external nacl_key_encrypt : nativeint -> nativeint -> nativeint -> string = "nac
 external nacl_key_decrypt : nativeint -> string -> nativeint = "nacl_key_decrypt"
 external nacl_encrypt : nativeint -> string -> int -> int -> unit = "nacl_encrypt"
 external nacl_decrypt : nativeint -> int -> int -> unit = "nacl_decrypt"
-external nacl_cct_decrypt : nativeint -> nativeint -> string -> int -> string -> string = "nacl_cct_decrypt"
+external nacl_decrypt_v1 : nativeint -> nativeint -> string -> int -> string -> string = "nacl_decrypt_v1"
 
 let nacl = nacl_init()
 
@@ -131,8 +131,7 @@ let encrypt key key_encs chunk0 fdesc_src fdesc_dst =
 	nacl_encrypt key chunk0 (fdesc_to_int fdesc_src) (fdesc_to_int fdesc_dst)
 
 
-let decrypt sk fdesc_src fdesc_dst =
-	(* XXX: use sk_list here instead of a single one *)
+let decrypt sk_list fdesc_src fdesc_dst =
 	let line_buff = Bytes.create header_line_len in
 	let rec read_line n =
 		let m = try eintr_loop (Unix.read fdesc_src line_buff n) 1
@@ -140,22 +139,25 @@ let decrypt sk fdesc_src fdesc_dst =
 				raise (DecryptFail (fmt "too long key line [pos=%d]" n)) in
 		if m = 0 || (Bytes.get line_buff n) = '\n'
 			then Bytes.sub_string line_buff 0 n else read_line (n + 1) in
-	let rec read_key sk key =
+	let rec read_key key =
 		let key_enc_b64 = read_line 0 in
 		if key_enc_b64 = header_end then key else
-		let key = if key <> 0n then key else
-			try nacl_key_decrypt sk key_enc_b64
+		if key <> 0n then read_key key else (* skip past other keyslots with the key *)
+		let try_sk sk =
+			try Some (nacl_key_decrypt sk key_enc_b64)
 			with Failure err ->
-				if err = "crypto_box_open_easy failed" then key else raise (Failure err) in
-		read_key sk key in
+				if err = "crypto_box_open_easy failed"
+				then None else raise (Failure err) in
+		match List.find_map try_sk sk_list
+		with | Some key -> read_key key | None -> read_key key in
 	let _magic_tail = read_line 0 in
-	let key = match read_key sk 0n with
+	let key = match read_key 0n with
 		| 0n -> raise (DecryptFail "key mismatch") | key -> key in
 	nacl_decrypt key (fdesc_to_int fdesc_src) (fdesc_to_int fdesc_dst)
 
 
-let decrypt_v1 sk fdesc_src fdesc_dst =
-	(* XXX: use sk_list here instead of a single one *)
+let decrypt_v1 sk_list fdesc_src fdesc_dst =
+	(* Decrypts more complicated old py2 ghg script format, can be dropped later *)
 	let src = Unix.in_channel_of_descr fdesc_src in
 	let dst = Unix.out_channel_of_descr fdesc_dst in
 	let input_be_int n =
@@ -170,32 +172,37 @@ let decrypt_v1 sk fdesc_src fdesc_dst =
 		let cpt_len = input_be_int 4 in
 		let _cct_skip = really_input_string src cct_len in
 		if cpt_len = 0 then () else cct_skip () in
-	let rec cct_dec n nonce pk =
+	let rec cct_dec sk pk nonce n =
 		let cct_len = input_be_int 4 in
 		let cpt_len = input_be_int 4 in
 		let cct = really_input_string src cct_len in
 		if cpt_len = 0 then () else
-			let cpt = nacl_cct_decrypt sk pk nonce n cct in
+			let cpt = nacl_decrypt_v1 sk pk nonce n cct in
 			output_string dst cpt;
-			cct_dec (n + 1) nonce pk in
-	let rec cct pk_id =
+			cct_dec sk pk nonce (n + 1) in
+	let rec cct pk_id_map =
 		let header =
 			try List.rev (String.split_on_char ' ' (input_line src))
 			with End_of_file -> raise (DecryptFail "key mismatch") in
 		let pk_b64, nonce_b64, cct_pk_id =
 			List.(nth header 2, nth header 1, nth header 0) in
-		if cct_pk_id = pk_id then
+		match Hashtbl.find_opt pk_id_map cct_pk_id with
+		| Some sk ->
 			let nonce = nacl_b64_to_string nonce_b64 16 in
 			let pk = nacl_key_load pk_b64 in
-			Fun.protect ~finally:(fun () -> nacl_key_free pk) (fun () -> cct_dec 0 nonce pk)
-		else (cct_skip (); cct pk_id) in
-	let pk = nacl_key_sk_to_pk sk in
-	Fun.protect ~finally:(fun () -> nacl_key_free pk) (fun () -> cct (nacl_key_hash pk))
+			Fun.protect ~finally:(fun () -> nacl_key_free pk) (fun () -> cct_dec sk pk nonce 0)
+		| None -> (cct_skip (); cct pk_id_map) in
+	let pk_id_map = Hashtbl.create 1 in
+	List.iter ( fun sk ->
+		let pk = nacl_key_sk_to_pk sk in
+		Hashtbl.add pk_id_map (nacl_key_hash pk) sk;
+		nacl_key_free pk ) sk_list;
+	cct pk_id_map
 
 
 let () =
 	(* XXX: implement src/dst file handling *)
-	(* XXX: use keys from config file *)
+	(* XXX: use keys from config file, load proper sk_list *)
 	if !cli_key_sk = "" then ( prerr_endline (* XXX *)
 		"ERROR: -k/--key option is required, as -c/--conf is not implemented"; exit 1 );
 
@@ -215,16 +222,16 @@ let () =
 	match magic_read 0 with
 
 	| s when s = magic_v1 ->
-		let sk = parse_key "-k/--key" true !cli_key_sk in
+		let sk_list = [parse_key "-k/--key" true !cli_key_sk] in
 		Fun.protect
-			~finally:(fun () -> nacl_key_free sk)
-			(fun () -> decrypt_v1 sk Unix.stdin Unix.stdout)
+			~finally:(fun () -> List.iter nacl_key_free sk_list)
+			(fun () -> decrypt_v1 sk_list Unix.stdin Unix.stdout)
 
 	| s when s = magic_v2 ->
-		let sk = parse_key "-k/--key" true !cli_key_sk in
+		let sk_list = [parse_key "-k/--key" true !cli_key_sk] in
 		Fun.protect
-			~finally:(fun () -> nacl_key_free sk)
-			(fun () -> decrypt sk Unix.stdin Unix.stdout)
+			~finally:(fun () -> List.iter nacl_key_free sk_list)
+			(fun () -> decrypt sk_list Unix.stdin Unix.stdout)
 
 	| s ->
 		(* XXX: bark at raw64- keys in pk_list when config will be implemented *)

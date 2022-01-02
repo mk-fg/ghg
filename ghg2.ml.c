@@ -1,16 +1,11 @@
-// XXX: cleanup includes
-
 #include <unistd.h>
 #include <string.h>
-#include <limits.h>
-#include <errno.h>
 #include <stdint.h>
 
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
 #include <caml/alloc.h>
 #include <caml/fail.h>
-#include <caml/callback.h>
 
 #include <sodium.h>
 
@@ -274,7 +269,7 @@ value nacl_decrypt(value v_key, value v_fd_src, value v_fd_dst) {
 	caml_failwith(err);
 }
 
-value nacl_cct_decrypt(
+value nacl_decrypt_v1(
 		value v_sk, value v_pk, value v_nonce, value v_n, value v_ct ) {
 	// Decode ciphertext chunk in an old py2 ghg script format
 	CAMLparam5(v_sk, v_pk, v_nonce, v_n, v_ct);
