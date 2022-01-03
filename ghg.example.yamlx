@@ -1,0 +1,51 @@
+### File format is kinda like a flat YAML,
+###   with either simple string values, space-separated or indented-lines lists.
+### All values are urlsafe-base64-encoded public (pk) or private (sk) keys or a links to keys.
+### Value format is "{ sk64 | pk64 | link }.{spec}" or a list of such.
+
+### Couple special values starting with dash ("-") specify/link-to default keys,
+###   while the rest can be specified by name with -k/--key or -r/--recipient option.
+
+## -keys: keys to use for encryption/decryption ops
+##   Any private (sk64.*) keys will be used for both source and recipient, public ones for recipient.
+##   Single private key specified here for example will encrypt/decrypt with-and-to itself.
+##   Can be empty/removed to default-use one-way encryption between "-keys-from" and "-keys-to".
+##   Same keys and key-lists can be linked in any of these sets with any amount of overlaps.
+## -keys-from: keys to only use for encryption source - must be sk64.* keys
+## -keys-to: keys to only use for encryption destination, as a public keys, even if they're sk64.*
+## -keys-dec: private keys to only try/use for decryption, and not to encrypt with/to these, e.g. legacy keys
+-keys: link.workstations
+
+# -keys-from: # these special options are don't have to be present
+-keys-to: # empty values/lists are also fine
+-keys-dec: link.old-key-2015-12-13 link.old-backup
+
+##
+
+workstations:
+  link.desktop
+  link.laptop
+desktop: sk64.v81IAezQzuzZQ0e9LQk2eaMRNzTAyxFRAfW-qSK-svQ
+laptop: pk64.mIkC20NfVcFLgKJ5bm5ck93BB55R0XjXTElbtKZ6zSs=
+
+backup: # to use with "ghg -k backup ..."
+  link.backup.storage-hosts
+  link.backup.offline-keys
+  link.backup.legacy
+  sk64.M4GuROf3vNLZTAtHcgYPkO7gnC6sPFBSA67-CvV2Fc8=
+
+backup.storage-hosts: link.backup.hostX link.backup.hostY
+backup.hostX: pk64.DZqKsImH_Rizt38ariDw-jD-E9pXFbNQ38aoyKIIn2k
+backup.hostY: pk64.NUcN-SC6rnqLv37d7I3gYnvBZP_Obb5R8ESifuILhe0=
+
+backup.offline-keys:
+  pk64.PddqJWLx1T-XWD_tnbjb-uWJNgp8muQFK_jHhflGOGo=
+  pk64.QIRv0_7ke5H78A-xQTS4FEZKZ4IGeEfAYLoLeGug0B4
+  pk64.Mm4H27O739v-pB6WiLCnFHZZcoFqdvyNgCwl3nuZemw=
+
+backup.legacy: # key(s) here to be added later
+
+test: sk64.rdEpmXEehh61Nd1d08qL0CCjBzjQtzaXpN-BoTCvpVA=
+
+old-key-2015-12-13: sk64.gXNGcNgy22YxBTDb5wK0Cz8zpRNhjrs-aDLanbj22Fs=
+old-backup: sk64.VBjFzFE93GtWwUqA4s7s5s_bEy-GW054t9gHPuIevZA=
