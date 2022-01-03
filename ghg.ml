@@ -21,6 +21,7 @@ let cli_key_pk_add = (fun k -> cli_key_pk := !cli_key_pk @ [k])
 let cli_key_convert = ref false
 let cli_key_gen = ref false
 let cli_files = ref []
+let cli_stdout = ref false
 
 let () =
 	let t, help = "\n      ", ref false in let args =
@@ -52,6 +53,13 @@ let () =
 				t^"Local secret key name/spec(s) to use for encryption ops. Can be used multiple times." ^
 				t^"Using the option disregards default key specs in the config file, if any." ^
 				t^"Same as with -r/--recipient option, use config for sk64.* keys - args don't work for secrets.\n");
+
+			("-o", Arg.Set cli_stdout, " ");
+			("--stdout", Arg.Set cli_stdout,
+				t^"Encrypt/decrypt to stdout, even when file path is specified, not removing src files.\n");
+			("-s", Arg.Unit Fun.id, " ");
+			("--stable", Arg.Unit Fun.id,
+				t^"Not Implemented: stable encryption option flag, left here for compatibility, does nothing.\n");
 
 			("-p", Arg.Set cli_key_convert, " ");
 			("--pubkey", Arg.Set cli_key_convert,
@@ -180,7 +188,7 @@ let parse_key_list =
 				List.iteri ( fun m kc ->
 					let key_name = if (List.length k_list) = 1
 						then key_name else fmt "%s.%d" key_name (m + 1) in
-					(* print_endline (fmt "-- parse sk=%b %s %s (%s)" is_sk k kc key_name); *)
+					(* prerr_endline (fmt "-- parse sk=%b %s %s (%s)" is_sk k kc key_name); *)
 					try key_list := !key_list @ [parse_key key_name is_sk kc] with
 					| KeyParseMismatch -> if not k_filter then
 						raise (KeyParseFail (fmt "secret key is required (%s)" key_name))
@@ -301,8 +309,8 @@ let () =
 
 	let fdesc_src, fdesc_dst = ref Unix.stdin, ref Unix.stdout in
 	let proc_file fn =
-		let fn_used = fn <> "" && fn <> "-" in
-		if fn_used then fdesc_src := Unix.openfile fn [O_RDONLY] 0;
+		let fn_used = fn <> "" && fn <> "-" && not !cli_stdout in
+		if fn_used || !cli_stdout then fdesc_src := Unix.openfile fn [O_RDONLY] 0;
 
 		let magic = Bytes.create magic_len in
 		let rec magic_read n =
@@ -313,21 +321,21 @@ let () =
 		match if !cli_enc then "" else magic_read 0 with
 
 		| s when !cli_dec || s = magic_v1 || s = magic_v2 ->
-			( if fn_used then
-				let fn_dst = if String.ends_with ~suffix:".ghg" fn
-					then String.sub fn 0 ((String.length fn) - 4) else (fn ^ ".dec") in
-				fdesc_dst := Unix.openfile fn_dst [O_WRONLY; O_CREAT; O_TRUNC] 0o644 );
+			let fn_dst = if String.ends_with ~suffix:".ghg" fn
+				then String.sub fn 0 ((String.length fn) - 4) else (fn ^ ".dec") in
 			let sk_list = parse_key_list conf "-k/--key" true
 				(if !cli_key_sk = ["-keys"] then ["-keys"; "-keys-dec"] else !cli_key_sk) in
 			let dec_func = if s = magic_v1 then decrypt_v1 else decrypt in
-			Fun.protect
-				(fun () -> dec_func sk_list !fdesc_src !fdesc_dst)
+			Fun.protect ( fun () ->
+					if fn_used then fdesc_dst := Unix.openfile
+						fn_dst [O_WRONLY; O_CREAT; O_EXCL] 0o600;
+					try dec_func sk_list !fdesc_src !fdesc_dst
+					with e -> if fn_used then Unix.unlink fn_dst; raise e )
 				~finally:(fun () -> List.iter nacl_key_free sk_list);
 			if fn_used then Unix.unlink fn
 
 		| s ->
-			( if fn_used then fdesc_dst :=
-				Unix.openfile (fn ^ ".ghg") [O_WRONLY; O_CREAT; O_TRUNC] 0o644 );
+			let fn_dst = fn ^ ".ghg" in
 			let key = nacl_gen_key () in
 			let sk_list, pk_list = ref [], ref [] in
 			Fun.protect ( fun () ->
@@ -335,7 +343,10 @@ let () =
 					pk_list := parse_key_list conf "-r/--recipient" false !cli_key_pk;
 					let sk = List.nth !sk_list 0 in (* no need for >1 sk, as its pk is embedded in the slot *)
 					let key_slots = List.map (fun pk -> nacl_key_encrypt sk pk key) !pk_list in
-					encrypt key key_slots s !fdesc_src !fdesc_dst )
+					if fn_used then fdesc_dst := Unix.openfile
+						fn_dst [O_WRONLY; O_CREAT; O_EXCL] 0o644;
+					try encrypt key key_slots s !fdesc_src !fdesc_dst
+					with e -> if fn_used then Unix.unlink fn_dst; raise e )
 				~finally:(fun () -> List.iter nacl_key_free (!sk_list @ !pk_list));
 			if fn_used then Unix.unlink fn in
 
@@ -343,5 +354,6 @@ let () =
 	List.iter ( fun fn ->
 		fdesc_src := Unix.stdin; fdesc_dst := Unix.stdout;
 		Fun.protect (fun () -> proc_file fn) ~finally:( fun () ->
-			(try Unix.close !fdesc_src with Unix.Unix_error (Unix.EBADF, _, _) -> ());
-			(try Unix.close !fdesc_dst with Unix.Unix_error (Unix.EBADF, _, _) -> ()) ) ) !cli_files
+			if not !cli_stdout then
+				(try Unix.close !fdesc_dst with Unix.Unix_error (Unix.EBADF, _, _) -> ());
+			(try Unix.close !fdesc_src with Unix.Unix_error (Unix.EBADF, _, _) -> ()) ) ) !cli_files

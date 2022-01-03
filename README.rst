@@ -1,25 +1,39 @@
 ghg
 ===
 
-Simple GnuPG_ (command-line "gpg" tool, FOSS PGP implementation) replacement for
-file encryption, based on python-libnacl_ crypto primitives (`NaCl
-crypto_box`_), which doesn't require complex key/trust management stuff and can
-use ssh ed25519 keys directly, as well as base64-encoded key strings.
+Simple command-line NaCl/libsodium file encryption tool.
 
-All key management happens by editing YAML_ (with ordered keys for maps) file in
-either ``/etc/ghg.yaml`` or ``~/.ghg.yaml``.
-Both files are read and merged together (if/when present), with matching keys
-from latter overriding ones in the former.
+Intended to be a replacement for GnuPG_ file encryption mode (as in command-line
+"gpg" tool), based on modern libsodium_ crypto primitives like `NaCl crypto_box`_
+and secretstream_xchacha20poly1305 instead of old/brittle ElGamal and AES-based stuff.
 
-Does not care about gpg-agent and any kind of secret key encryption, email
-encryption and authentication (signatures), compression, "web of trust", signing
-keys or having images embedded in them - only for file encryption, as mentioned.
+Allows for an easy and efficient one-way file/pipe encryption from private to public
+keys, and having a lists of these, using any matching local private key(s) for decryption.
+
+Doesn't require complex key/trust management stuff, uses short base64-encoded
+ed25519 public/private key strings.
+All key management happens by editing very simple YAML-like text file in
+``/etc/ghg.yamlx``, or a path specified via ``-c/--conf`` option.
+
+It does not have any kind of gpg-agent/ssh-agent like stuff for key passphrases,
+not intended for email encryption or authentication (signatures), no compression,
+"web of trust", signed keys or having images embedded in them - just easy-to-use
+file encryption between public/private keys and some basic key agility, as mentioned.
 
 Same as with all crypto tools - use at your own risk, manage your trust
 carefully and check/audit such stuff for basic sanity, at least.
 
 Is it Certified, Peer-Reviewed or blessed-by-EFF-and-Crypto-Jesus-himself? Hell no.
 
+------------
+
+This tool was originally implemented as a python2 script (started in `mk-fg/fgtk repo`_),
+which used slightly different file format (which is still supported for decryption
+with same keys), proper YAML config, and had some extra options, like for stable encryption,
+parsing/using SSH ed25519 keys, etc, which only ended up being an unnecessary complication
+for my use-cases.
+
+That old script should be accessible via e.g. `commit c010639 here`_ for whatever legacy purposes.
 
 .. contents::
   :backlinks: none
@@ -29,94 +43,89 @@ Is it Certified, Peer-Reviewed or blessed-by-EFF-and-Crypto-Jesus-himself? Hell 
 Usage
 -----
 
-ghg.example.yaml::
+With `ghg.example.yamlx <ghg.example.yamlx>`_ config::
 
-  core:
-    key: mykey # name of the default key to use
+  -keys: link.workstations
+  -keys-dec: link.old-key-2015-12-13 link.old-backup
 
-    ## key-src: key to use as --key (local secret key) with --encrypt by default.
-    ## Have to be specified only if "key" above points to multiple or public key(s).
-    # key-src: mykey
+  workstations:
+    link.desktop
+    link.laptop
+  desktop: sk64.v81IAezQzuzZQ0e9LQk2eaMRNzTAyxFRAfW-qSK-svQ
+  laptop: pk64.mIkC20NfVcFLgKJ5bm5ck93BB55R0XjXTElbtKZ6zSs=
 
-  keys:
-    # When decrypting, hashed and checked to match pkid in the same order,
-    #  but with "key"/"key-src" from "core" section (see above) first
+  backup:
+    link.backup.storage-hosts
+    link.backup.offline-keys
+    sk64.M4GuROf3vNLZTAtHcgYPkO7gnC6sPFBSA67-CvV2Fc8=
 
-    ssh-host: ssh-/etc/ssh/ssh_host_ed25519_key # only if accessible
-    ssh-user: ssh-~/.ssh/id_ed25519
+  backup.storage-hosts: link.backup.hostX link.backup.hostY
+  backup.hostX: pk64.DZqKsImH_Rizt38ariDw-jD-E9pXFbNQ38aoyKIIn2k
+  backup.hostY: pk64.NUcN-SC6rnqLv37d7I3gYnvBZP_Obb5R8ESifuILhe0=
 
-    mykey: raw64-v81IAezQzuzZQ0e9LQk2eaMRNzTAyxFRAfW-qSK-svQ=
-    my-other-key: raw64-rdEpmXEehh61Nd1d08qL0CCjBzjQtzaXpN-BoTCvpVA=
-    some-key-on-remote: pub64-mIkC20NfVcFLgKJ5bm5ck93BB55R0XjXTElbtKZ6zSs=
+  backup.offline-keys:
+    pk64.PddqJWLx1T-XWD_tnbjb-uWJNgp8muQFK_jHhflGOGo=
+    pk64.QIRv0_7ke5H78A-xQTS4FEZKZ4IGeEfAYLoLeGug0B4
+    pk64.Mm4H27O739v-pB6WiLCnFHZZcoFqdvyNgCwl3nuZemw=
 
-    backup:
-      - link-backup-hostX
-      - link-backup-hostY
-      - raw64-M4GuROf3vNLZTAtHcgYPkO7gnC6sPFBSA67-CvV2Fc8=
-    backup-hostX: pub64-DZqKsImH_Rizt38ariDw-jD-E9pXFbNQ38aoyKIIn2k=
-    backup-hostY: pub64-PddqJWLx1T-XWD_tnbjb-uWJNgp8muQFK_jHhflGOGo=
+  old-key-2015-12-13: sk64.gXNGcNgy22YxBTDb5wK0Cz8zpRNhjrs-aDLanbj22Fs=
+  old-backup: sk64.VBjFzFE93GtWwUqA4s7s5s_bEy-GW054t9gHPuIevZA=
 
-    ## Key format is "{ ssh | raw64 | pub64 | link }-{spec}" or a list of such
-    # mykey-a: raw64-gXNGcNgy22YxBTDb5wK0Cz8zpRNhjrs-aDLanbj22Fs=
-    # mykey-b: ssh-~/.ssh/id_ed25519_mykey-b
-    # mykey-current: [link-mykey-a, link-mykey-b]
+(`see config file in the repo`_ for comments describing format and all its features)
 
-Usage::
+Usage examples::
+
+  % ghg -h
+  ...
+  ## Should neatly describe how it works and all supported options
 
   % ghg -e secret-data.txt
   % ghg -d secret-data.txt.ghg
   ## Works same as gpg, replacing source files, but with .ghg suffix
+  ## -e/-d opts can be dropped - auto-detected from first bytes in a file
 
-  % ghg -e -r some-key-on-remote -r ssh-user secret-data.txt
-  ## Resulting file will be decryptable with any of the specified keys
+  % ghg -e -r some-key-on-remote -r offline-backup-key secret-data.txt
+  ## Resulting file will be decryptable only with keys specified with -r
 
-  % ghg -e -r pub64-mIkC20NfVcFLgKJ5bm5ck93BB55R0XjXTElbtKZ6zSs= secret-data.txt
+  % ghg -e -r pk64.mIkC20NfVcFLgKJ5bm5ck93BB55R0XjXTElbtKZ6zSs= secret-data.txt
   ## Public keys are allowed on the command-line, with same format as in config
 
   % ls -lah /bin/blender
   -rwxr-xr-x 1 root root 55M Nov  4 17:10 /bin/blender
   % ghg </bin/blender >blender.ghg
-  ## Encrypting huge files should be fine (chunked), stdin/stdout work too
-  ## If neither -e/-d are specified, direction is auto-detected from file magic
-
-  % ghg -se -r backup secret-data.txt
-  ## -s/--stable uses hmac-sha256 of the plaintext as nonce
+  ## Encrypting large files should be fine (chunked), stdin/stdout work too
+  ## With neither -e/-d are specified, direction is auto-detected from file magic
 
   % ghg -p my-other-key
-  pub64-itMXyr0tmn9HYz95YMPPLNmncE1bXQUnHK4qOco8bRQ=
-  ## Print pubkey(s) (in "pub64-..." format) for specified secret key
+  pk64.itMXyr0tmn9HYz95YMPPLNmncE1bXQUnHK4qOco8bRQ
+  ## Print pubkey(s) (in "pk64.*" format) for specified/configured private key
 
   % ghg -g
-  raw64-GfJUQ51_BwWtaqZknIX0Lh129hh_T3eDKzpx3RwV77c=
-  ## Generate and print new secret key
+  sk64.GfJUQ51_BwWtaqZknIX0Lh129hh_T3eDKzpx3RwV77c=
+  ## Generate and print new private key
 
-  % ghg -h
-  ...
-  ## See output for all the other options
-
-Some knowledge of how assymetric crypto algos work is assumed on the part of the
-user, to understand the basic concepts of "public" and "secret" keys, for example.
+Some general knowledge of how assymetric crypto works is assumed on the part of the user,
+such as understanding of basic concepts like "public" and "private" keys, for example.
 
 
 
 Installation
 ------------
 
-Tool is written in python (2.7, not 3.X) and uses PyYAML_ and python-libnacl_.
+This is a small OCaml_ cli app with C bindings, which can be built using any
+modern (4.13+) ocamlopt compiler and the usual make tool, with libsodium_ on the system::
 
-On e.g. Arch, for system-wide install, do::
+  % make
+  % ./ghg --help
+  Usage: ./ghg [opts] [file ...]
+  ...
 
-  # pacman -S --needed python2 python2-yaml python2-libnacl
-  # install -m755 ghg /usr/local/bin/
-  # install -m640 ghg.example.yaml /etc/ghg.yaml
+That should produce ~1M binary, linked against libsodium (for actual crypto stuff),
+which can then be installed and copied between systems normally.
+OCaml compiler is only needed to build the tool, not to run it.
 
-Install for user with pip_::
-
-  % pip install --user pyyaml libnacl
-  % install -m755 ghg ~/bin/
-  % install -m600 ghg.example.yaml ~/.ghg.yaml
-
-Done!
+``test.sh`` script can be used for a quick sanity-check after any code tweaks,
+mostly adapted from an earlier script, with a bunch of leftover redundant tests.
 
 
 
@@ -127,67 +136,31 @@ Encryption process in pseudocode::
 
   file_plaintext = input_data
   stable = input_stable_option
-  box_dst_pk_list, box_src_sk, box_src_pk = input_key
+  box_dst_pk_list, box_src_sk, box_src_pk = input_keys
 
   enc_magic = '¯\_ʻghgʻ_/¯'
-  enc_ver = '1'
-  enc_block_size = 4 * 2**20
+  enc_ver = '2'
+  enc_header_cap = '-'
+  enc_block_size = 16384
 
-  if stable:
-    nonce_32B = HMAC(
-      key = enc_magic,
-      msg = file_plaintext,
-      digest = sha256 )
-    nonce_16B = nonce_32B[:16]
+  sym_key = random(crypto_secretstream_xchacha20poly1305_KEYBYTES)
 
-  else:
-    nonce_16B = read('/dev/urandom', 16)
-
-  file_checksum = sha256(file_plaintext)
+  header = enc_magic || ' ' || enc_ver || ' ' || enc_header_cap || '\n'
+  write(header)
 
   for box_dst_pk in box_dst_pk_list:
+    box_nonce = random(crypto_box_NONCEBYTES)
+    key_slot_ct = crypto_box_easy(sym_key, box_nonce, box_src_sk, box_dst_pk)
+    key_slot = urlsafe_base64(box_src_pk || box_nonce || key_slot_ct)
+    write(key_slot || '\n')
 
-    pkid_b64_8B = base64(blake2b(box_dst_pk)[:6])
-    box_src_pk_b64 = base64(box_src_pk)
-    nonce_16B_b64 = base64(nonce_16B)
+  write('---\n')
 
-    header = enc_magic || ' ' ||
-      enc_ver || ' ' ||
-      box_src_pk_b64 || ' ' ||
-      nonce_16B_b64 || ' ' ||
-      pkid_b64_8B || '\n'
+  for chunk_plaintext in break_into_chunks(file_plaintext, enc_block_size):
+    chunk_ciphertext = crypto_secretstream_xchacha20poly1305(chunk_plaintext, sym_key)
+    write(chunk_ciphertext)
 
-    write(header)
-
-    n = 0
-    for chunk_plaintext in break_into_chunks(file_plaintext, enc_block_size):
-
-      chunk_nonce = nonce_16B || uint64_BE(n)
-      chunk_ciphertext = crypto_box(chunk_plaintext, chunk_nonce, box_dst_pk, box_src_sk)
-      n += 1
-
-      box_header = uint32_BE(length(chunk_ciphertext)) ||
-        uint32_BE(length(chunk_plaintext))
-
-      write(box_header)
-      write(chunk_ciphertext)
-
-    chunk_nonce = nonce_16B || uint64_BE(n)
-    checksum_ciphertext = crypto_box(file_checksum, chunk_nonce, box_dst_pk, box_src_sk)
-
-    box_header_last = uint32_BE(length(checksum_ciphertext)) || uint32_BE(0)
-
-    write(box_header_last)
-    write(checksum_ciphertext)
-
-"crypto_box()" corresponds to `NaCl crypto_box`_ routine (with python-libnacl
-wrapper), which is a combination of Salsa20 stream cipher and and Poly1305
-authenticatior in one easy-to-use and secure package, implemented and maintained
-by very smart and skilled people (djb being the main author).
-
-Nonce is only derived from plaintext hash if --stable option is specified,
-which should exclude possibility of reuse for different plaintexts,
-yet provide deterministic output for the same file, otherwise is random.
+See libsodium_ docs for info on corresponding primitives there.
 
 "enc_ver" is encoded into "header" lines in case encryption algorithm might
 change in the future.
@@ -196,13 +169,12 @@ Weird "enc_magic" unicode stuff in the "header" is an arbitrary magic string to
 be able to easily and kinda-reliably tell if file is encrypted by the presence
 of that.
 
-When decrypting file using bunch of available (configured) keys, each "header"
-line gets checked for "pkid" match to one of the keys, with non-matching
-ciphertext blocks (encrypted for a unavailable key) skipped.
+When decrypting file using bunch of available (configured) keys, crypto_box_open_easy
+decryption is attempted for each "key_slot" line at the top using all specified/configured
+private keys, until any of them works, or exiting with failure otherwise.
 
-"file_checksum" is not strictly necessary with AEAD that crypto_box provides,
-but added to make sure that code doesn't mess up merging chunks' plaintexts in
-any way.
+crypto_secretstream_xchacha20poly1305 AEAD encryption should provide both
+secrecy and integrity of the plaintext data, with no additional checksums.
 
 Unlike gpg, this tool explicitly doesn't do compression, which can be applied
 before encryption manually (encypted data is pretty much incompressible), but do
@@ -215,27 +187,27 @@ compression in TLS for examples).
 Links
 -----
 
-- `libsodium/issues/141 <https://github.com/jedisct1/libsodium/issues/141>`_
+- `age <https://github.com/FiloSottile/age>`_
 
-  Lots of great info and links on how to use e.g. crypto_box to encrypt a
-  stream.
+  More recent tool similar to an older python2 ghg script here, with a lot more
+  features than current ghg.ml, but also a lot more unnecessary junk and dependencies.
 
-- `Adam Langley's "Encrypting Streams" blog post
-  <https://www.imperialviolet.org/2014/06/27/streamingencryption.html>`_
+  Considered migrating to it (or its `rage <https://github.com/str4d/rage>`_ rewrite)
+  myself, but couldn't justify extra complexity that involves, and wanted backwards
+  compability with the old format of the script here, but those shouldn't apply to new uses,
+  so check it out.
 
-  Mentions `draft-mcgrew-aero-01 <https://tools.ietf.org/html/draft-mcgrew-aero-01>`_
-  as a particular example of a good format, though unnecessary complicated in
-  this case.
+- `Earlier python2 ghg script <https://github.com/mk-fg/ghg/blob/c010639/ghg>`_
 
-- `kaepora/miniLock <https://github.com/kaepora/miniLock>`_
-
-  Similar tool in JS with much more exposure to public scrutiny.
+  Should only be useful for some legacy purposes.
 
 
 
 .. _GnuPG: https://www.gnupg.org/
-.. _python-libnacl: https://libnacl.readthedocs.org/
+.. _libsodium: https://libsodium.gitbook.io/
 .. _NaCl crypto_box: http://nacl.cr.yp.to/box.html
-.. _YAML: https://en.wikipedia.org/wiki/YAML
-.. _PyYAML: http://pyyaml.org/
-.. _pip: https://pip.pypa.io/
+.. _mk-fg/fgtk repo: https://github.com/mk-fg/fgtk
+.. _commit c010639 here: https://github.com/mk-fg/ghg/blob/c010639/ghg
+.. _ghg.example.yamlx: ghg.example.yamlx
+.. _see config file in the repo: ghg.example.yamlx
+.. _OCaml: https://ocaml.org/
