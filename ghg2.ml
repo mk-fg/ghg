@@ -28,7 +28,6 @@ let () =
 			("--conf", Arg.Set_string cli_conf,
 				t^"Alternate encryption-keys-config file location. Default: " ^ !cli_conf ^ "\n");
 
-			(* XXX: use these explicit flags *)
 			("-e", Arg.Set cli_enc, " ");
 			("--encrypt", Arg.Set cli_enc,
 				t^"Encrypt specified file or stdin stream." ^
@@ -52,7 +51,7 @@ let () =
 			("--key", Arg.String cli_key_sk_add,
 				t^"Local secret key name/spec(s) to use for encryption ops. Can be used multiple times." ^
 				t^"Using the option disregards default key specs in the config file, if any." ^
-				t^"Same as with -r/--recipient option, use config for sk64.* keys - command args are not secret.\n");
+				t^"Same as with -r/--recipient option, use config for sk64.* keys - args don't work for secrets.\n");
 
 			("-p", Arg.Set cli_key_convert, " ");
 			("--pubkey", Arg.Set cli_key_convert,
@@ -104,6 +103,7 @@ let rec eintr_loop f x =
 	try f x with Unix.Unix_error (Unix.EINTR, _, _) -> eintr_loop f x
 
 
+exception ArgsFail of string
 exception KeyParseNoMatch
 exception KeyParseMismatch
 exception KeyParseFail of string
@@ -235,22 +235,17 @@ let decrypt_v1 sk_list fdesc_src fdesc_dst =
 	(* Decrypts more complicated old py2 ghg script format, can be dropped later *)
 	let src = Unix.in_channel_of_descr fdesc_src in
 	let dst = Unix.out_channel_of_descr fdesc_dst in
-	let input_be_int n =
-		(* XXX: replace with Bytes.get_int32_be *)
-		let res = ref 0 in
-		let rec apply_bytes n =
-			let byte = input_byte src in
-			res := Int.logor (Int.shift_left !res 8) byte;
-			if n = 1 then !res else apply_bytes (n - 1) in
-		apply_bytes n in
+	let read_be_int () = Int32.to_int
+		(String.get_int32_be (really_input_string src 4) 0) in
+	let read_cct_cpt_lens () =
+		let cct_len = read_be_int () in
+		let cpt_len = read_be_int () in cct_len, cpt_len in
 	let rec cct_skip () =
-		let cct_len = input_be_int 4 in
-		let cpt_len = input_be_int 4 in
+		let cct_len, cpt_len = read_cct_cpt_lens () in
 		let _cct_skip = really_input_string src cct_len in
 		if cpt_len = 0 then () else cct_skip () in
 	let rec cct_dec sk pk nonce n =
-		let cct_len = input_be_int 4 in
-		let cpt_len = input_be_int 4 in
+		let cct_len, cpt_len = read_cct_cpt_lens () in
 		let cct = really_input_string src cct_len in
 		if cpt_len = 0 then () else
 			let cpt = nacl_decrypt_v1 sk pk nonce n cct in
@@ -277,6 +272,8 @@ let decrypt_v1 sk_list fdesc_src fdesc_dst =
 
 
 let () =
+	if !cli_enc && !cli_dec then
+		raise (ArgsFail "-e/--encrypt and -d/--decrypt opts are mutually exclusive");
 
 	let conf_src =
 		try Unix.in_channel_of_descr (Unix.openfile !cli_conf [O_RDONLY] 0)
@@ -313,9 +310,9 @@ let () =
 			match eintr_loop (Unix.read !fdesc_src magic n) (magic_len - n) with
 			| 0 -> Bytes.sub_string magic 0 n
 			| m -> magic_read (n + m) in
-		match magic_read 0 with
+		match if !cli_enc then "" else magic_read 0 with
 
-		| s when s = magic_v1 || s = magic_v2 ->
+		| s when !cli_dec || s = magic_v1 || s = magic_v2 ->
 			( if fn_used then
 				let fn_dst = if String.ends_with ~suffix:".ghg" fn
 					then String.sub fn 0 ((String.length fn) - 4) else (fn ^ ".dec") in
@@ -343,6 +340,8 @@ let () =
 			if fn_used then Unix.unlink fn in
 
 	if (List.length !cli_files) = 0 then cli_files := ["-"];
-	Fun.protect (fun () -> List.iter proc_file !cli_files) ~finally:( fun () ->
-		(try Unix.close !fdesc_src with Unix.Unix_error (Unix.EBADF, _, _) -> ());
-		(try Unix.close !fdesc_dst with Unix.Unix_error (Unix.EBADF, _, _) -> ()) )
+	List.iter ( fun fn ->
+		fdesc_src := Unix.stdin; fdesc_dst := Unix.stdout;
+		Fun.protect (fun () -> proc_file fn) ~finally:( fun () ->
+			(try Unix.close !fdesc_src with Unix.Unix_error (Unix.EBADF, _, _) -> ());
+			(try Unix.close !fdesc_dst with Unix.Unix_error (Unix.EBADF, _, _) -> ()) ) ) !cli_files
