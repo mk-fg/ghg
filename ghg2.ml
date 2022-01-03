@@ -1,16 +1,14 @@
 (* Simple command-line NaCl/libsodium file encryption tool.
  *
  * Build with:
- *   % ocamlopt -o ghg2 -O2 unix.cmxa str.cmxa \
- *      -cclib -lsodium -ccopt -Wl,--no-as-needed ghg2.ml ghg2.ml.c
- *   % strip ghg2
+ *   % ocamlopt -o ghg -O2 unix.cmxa str.cmxa \
+ *      -cclib -lsodium -ccopt -Wl,--no-as-needed ghg.ml ghg.ml.c
+ *   % strip ghg
  *
  * Usage:
- *   % ./ghg2 --help
- *   % ./ghg2 <data >data.ghg
- * Debug: OCAMLRUNPARAM=b ./ghg2 ...
- *
- * XXX: rename-to/replace ghg
+ *   % ./ghg --help
+ *   % ./ghg <data >data.ghg
+ * Debug: OCAMLRUNPARAM=b ./ghg ...
  *)
 
 let cli_conf = ref "/etc/ghg.yamlx"
@@ -30,6 +28,7 @@ let () =
 			("--conf", Arg.Set_string cli_conf,
 				t^"Alternate encryption-keys-config file location. Default: " ^ !cli_conf ^ "\n");
 
+			(* XXX: use these explicit flags *)
 			("-e", Arg.Set cli_enc, " ");
 			("--encrypt", Arg.Set cli_enc,
 				t^"Encrypt specified file or stdin stream." ^
@@ -64,12 +63,16 @@ let () =
 
 			("-h", Arg.Set help, " "); ("-help", Arg.Set help, " ") ] in
 	let usage_msg = ("Usage: " ^ Sys.argv.(0) ^ " [opts] [file ...]\
-		\n\nEncrypt/decrypt specified files via libsodium, using specified/configured keys.\n") in
+		\n\nEncrypt/decrypt specified files via libsodium, using specified/configured keys.\n\
+		Direction is auto-detected from file/stream contents, if not explicitly specified.\n\
+		File suffix/extension .ghg is added when encrypting named files, and original unlinked.\n\
+		When decrypting named files, .ghg suffix stripped (or .dec added), encrypted file removed.\n\
+		Default is to use stdin/stdout (\"-\" arg also works as those).\n") in
 	Arg.parse args (fun file -> cli_files := file :: !cli_files) usage_msg;
 	if !help then (Arg.usage args usage_msg; exit 0)
 
 
-(* libsodium bindings from ghg2.ml.c *)
+(* libsodium bindings from ghg.ml.c *)
 type nacl_constants_record = {key_len: int} [@@boxed]
 external nacl_init : unit -> nacl_constants_record = "nacl_init"
 external nacl_b64_to_string : string -> int -> string = "nacl_b64_to_string"
@@ -233,6 +236,7 @@ let decrypt_v1 sk_list fdesc_src fdesc_dst =
 	let src = Unix.in_channel_of_descr fdesc_src in
 	let dst = Unix.out_channel_of_descr fdesc_dst in
 	let input_be_int n =
+		(* XXX: replace with Bytes.get_int32_be *)
 		let res = ref 0 in
 		let rec apply_bytes n =
 			let byte = input_byte src in
@@ -269,7 +273,7 @@ let decrypt_v1 sk_list fdesc_src fdesc_dst =
 		let pk = nacl_key_sk_to_pk sk in
 		Hashtbl.add pk_id_map (nacl_key_hash pk) sk;
 		nacl_key_free pk ) sk_list;
-	cct pk_id_map
+	cct pk_id_map; flush dst (* no need to close src/dst - done on fdesc's *)
 
 
 let () =
@@ -298,37 +302,47 @@ let () =
 			~finally:(fun () -> List.iter nacl_key_free pk_list)
 	else
 
-	(* XXX: implement src/dst file handling *)
+	let fdesc_src, fdesc_dst = ref Unix.stdin, ref Unix.stdout in
+	let proc_file fn =
+		let fn_used = fn <> "" && fn <> "-" in
+		if fn_used then fdesc_src := Unix.openfile fn [O_RDONLY] 0;
 
-	let magic = Bytes.create magic_len in
-	let rec magic_read n =
-		if n >= magic_len then Bytes.to_string magic else
-		match eintr_loop (Unix.read Unix.stdin magic n) (magic_len - n) with
-		| 0 -> Bytes.sub_string magic 0 n
-		| m -> magic_read (n + m) in
-	match magic_read 0 with
+		let magic = Bytes.create magic_len in
+		let rec magic_read n =
+			if n >= magic_len then Bytes.to_string magic else
+			match eintr_loop (Unix.read !fdesc_src magic n) (magic_len - n) with
+			| 0 -> Bytes.sub_string magic 0 n
+			| m -> magic_read (n + m) in
+		match magic_read 0 with
 
-	| s when s = magic_v1 ->
-		let sk_list = parse_key_list conf "-k/--key" true
-			(if !cli_key_sk = ["-keys"] then ["-keys"; "-keys-dec"] else !cli_key_sk) in
-		Fun.protect
-			(fun () -> decrypt_v1 sk_list Unix.stdin Unix.stdout)
-			~finally:(fun () -> List.iter nacl_key_free sk_list)
+		| s when s = magic_v1 || s = magic_v2 ->
+			( if fn_used then
+				let fn_dst = if String.ends_with ~suffix:".ghg" fn
+					then String.sub fn 0 ((String.length fn) - 4) else (fn ^ ".dec") in
+				fdesc_dst := Unix.openfile fn_dst [O_WRONLY; O_CREAT; O_TRUNC] 0o644 );
+			let sk_list = parse_key_list conf "-k/--key" true
+				(if !cli_key_sk = ["-keys"] then ["-keys"; "-keys-dec"] else !cli_key_sk) in
+			let dec_func = if s = magic_v1 then decrypt_v1 else decrypt in
+			Fun.protect
+				(fun () -> dec_func sk_list !fdesc_src !fdesc_dst)
+				~finally:(fun () -> List.iter nacl_key_free sk_list);
+			if fn_used then Unix.unlink fn
 
-	| s when s = magic_v2 ->
-		let sk_list = parse_key_list conf "-k/--key" true
-			(if !cli_key_sk = ["-keys"] then ["-keys"; "-keys-dec"] else !cli_key_sk) in
-		Fun.protect
-			(fun () -> decrypt sk_list Unix.stdin Unix.stdout)
-			~finally:(fun () -> List.iter nacl_key_free sk_list)
+		| s ->
+			( if fn_used then fdesc_dst :=
+				Unix.openfile (fn ^ ".ghg") [O_WRONLY; O_CREAT; O_TRUNC] 0o644 );
+			let key = nacl_gen_key () in
+			let sk_list, pk_list = ref [], ref [] in
+			Fun.protect ( fun () ->
+					sk_list := parse_key_list conf "-k/--key" true !cli_key_sk;
+					pk_list := parse_key_list conf "-r/--recipient" false !cli_key_pk;
+					let sk = List.nth !sk_list 0 in (* no need for >1 sk, as its pk is embedded in the slot *)
+					let key_slots = List.map (fun pk -> nacl_key_encrypt sk pk key) !pk_list in
+					encrypt key key_slots s !fdesc_src !fdesc_dst )
+				~finally:(fun () -> List.iter nacl_key_free (!sk_list @ !pk_list));
+			if fn_used then Unix.unlink fn in
 
-	| s ->
-		let key = nacl_gen_key () in
-		let sk_list, pk_list = ref [], ref [] in
-		Fun.protect ( fun () ->
-				sk_list := parse_key_list conf "-k/--key" true !cli_key_sk;
-				pk_list := parse_key_list conf "-r/--recipient" false !cli_key_pk;
-				let sk = List.nth !sk_list 0 in (* no need for >1 sk, as its pk is embedded in the slot *)
-				let key_slots = List.map (fun pk -> nacl_key_encrypt sk pk key) !pk_list in
-				encrypt key key_slots s Unix.stdin Unix.stdout )
-			~finally:(fun () -> List.iter nacl_key_free (!sk_list @ !pk_list))
+	if (List.length !cli_files) = 0 then cli_files := ["-"];
+	Fun.protect (fun () -> List.iter proc_file !cli_files) ~finally:( fun () ->
+		(try Unix.close !fdesc_src with Unix.Unix_error (Unix.EBADF, _, _) -> ());
+		(try Unix.close !fdesc_dst with Unix.Unix_error (Unix.EBADF, _, _) -> ()) )
