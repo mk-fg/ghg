@@ -29,7 +29,7 @@ Is it Certified, Peer-Reviewed or blessed-by-EFF-and-Crypto-Jesus-himself? Hell 
 
 This tool was originally implemented as a python2 script (started in `mk-fg/fgtk repo`_),
 which used slightly different file format (which is still supported for decryption
-with same keys), proper YAML config, and had some extra options, like for stable encryption,
+with same keys), proper YAML config, and had some extra options, like stable encryption,
 parsing/using SSH ed25519 keys, etc, which only ended up being an unnecessary complication
 for my use-cases.
 
@@ -43,7 +43,7 @@ That old script should be accessible via e.g. `commit c010639 here`_ for whateve
 Usage
 -----
 
-With `ghg.example.yamlx <ghg.example.yamlx>`_ config::
+With `ghg.example.yamlx <ghg.example.yamlx>`_ config like this::
 
   -keys: link.workstations
   -keys-dec: link.old-key-2015-12-13 link.old-backup
@@ -73,7 +73,7 @@ With `ghg.example.yamlx <ghg.example.yamlx>`_ config::
 
 (`see config file in the repo`_ for comments describing format and all its features)
 
-Usage examples::
+Here are some usage examples::
 
   % ghg -h
   ...
@@ -124,8 +124,8 @@ That should produce ~1M binary, linked against libsodium (for actual crypto stuf
 which can then be installed and copied between systems normally.
 OCaml compiler is only needed to build the tool, not to run it.
 
-``test.sh`` script can be used for a quick sanity-check after any code tweaks,
-mostly adapted from an earlier script, with a bunch of leftover redundant tests.
+``test.sh`` script (or ``make test``) can be used for a quick sanity-check after code
+tweaks, mostly adapted from an earlier script, with a bunch of leftover redundant tests.
 
 
 

@@ -63,7 +63,7 @@ die() { echo >&2 "Test FAILED, run with -xx to see how exactly"; exit 1; }
 
 echo "-- test: simple"
 
-p="$tmp"/file.3M
+p="$tmp"/file.1M
 dd if=/dev/urandom of="$p" bs=3M count=1 status=none
 
 $ghg <"$p" >"$p".1.ghg
@@ -154,7 +154,9 @@ if $ghg "$p".8.ghg.bak.dec.ghg 2>/dev/null; then die; fi
 
 $ghg -o <"$p".8 >"$p".8.ghg
 $ghg -eo <"$p".8 >"$p".8.ghg
+$ghg -do <"$p".8.ghg >/dev/null
 if $ghg "$p".8 2>/dev/null; then die; fi
+if $ghg -do <"$p".8 &>/dev/null; then die; fi
 if $ghg "$p".8.ghg 2>/dev/null; then die; fi
 if [[ ! -e "$p".8 ]]; then die; fi
 if [[ ! -e "$p".8.ghg ]]; then die; fi
@@ -162,7 +164,7 @@ if [[ ! -e "$p".8.ghg ]]; then die; fi
 cat "$p".8.ghg >"$p".9.ghg
 cat "$p".8.ghg >>"$p".9.ghg
 if $ghg -d "$p".9.ghg 2>/dev/null; then die; fi
-if $ghg -do <"$p".9.ghg &>/dev/null; then die; fi
+if $ghg -d <"$p".9.ghg &>/dev/null; then die; fi
 if [[ -e "$p".9 ]]; then die; fi
 
 cat "$p".8.ghg >"$p".9.ghg
@@ -396,3 +398,16 @@ sha256 "$p".stable2 >>"$p".chk
 
 dd if=/dev/urandom of="$p".1.ghg bs=16 seek=500 count=1 status=none
 if $ghg -d "$p".1.ghg 2>/dev/null; then die; fi
+
+
+echo "-- test: file size and entropy"
+
+p="$tmp"/file.3M
+dd if=/dev/zero of="$p" bs=3M count=1 status=none
+
+bs0=$(stat -c%s "$p")
+$ghg "$p"
+[[ "$(stat -c%s "$p".ghg)" -gt "$bs0" ]] || die
+
+zstd -q "$p".ghg
+[[ "$(stat -c%s "$p".ghg.zst)" -gt "$bs0" ]] || die
