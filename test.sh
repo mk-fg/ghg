@@ -129,6 +129,47 @@ if [[ -e "$p".7 ]]; then die; fi
 dd if=/dev/urandom of="$p".5.ghg bs=16 seek=100 count=1 status=none
 if $ghg -d "$p".5.ghg 2>/dev/null; then die; fi
 
+cp "$p" "$p".8
+$ghg "$p".8
+cp "$p".8.ghg "$p".8.ghg.bak
+$ghg -e "$p".8.ghg
+if [[ -e "$p".8 ]]; then die; fi
+if [[ ! -e "$p".8.ghg.ghg ]]; then die; fi
+sha256 "$p" >"$p".chk
+sha256 "$p".8.ghg.bak >>"$p".chk
+sha256 "$p".8.ghg.ghg >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 3 && "$(wc -l <"$p".chk)" -eq 3 ]] || { cat "$p".chk; die; }
+
+$ghg "$p".8.ghg.ghg
+$ghg "$p".8.ghg
+$ghg "$p".8.ghg.bak
+if [[ -e "$p".8.ghg.bak ]]; then die; fi
+sha256 "$p" >"$p".chk
+sha256 "$p".8 >>"$p".chk
+sha256 "$p".8.ghg.bak.dec >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 3 ]] || { cat "$p".chk; die; }
+
+$ghg -o "$p".8 > "$p".8.ghg.bak.dec.ghg
+if $ghg "$p".8.ghg.bak.dec.ghg 2>/dev/null; then die; fi
+
+$ghg -o "$p".8 > "$p".8.ghg
+if $ghg "$p".8 2>/dev/null; then die; fi
+if $ghg "$p".8.ghg 2>/dev/null; then die; fi
+if [[ ! -e "$p".8 ]]; then die; fi
+if [[ ! -e "$p".8.ghg ]]; then die; fi
+
+cat "$p".8.ghg >"$p".9.ghg
+cat "$p".8.ghg >>"$p".9.ghg
+if $ghg -d "$p".9.ghg 2>/dev/null; then die; fi
+if $ghg -d <"$p".9.ghg &>/dev/null; then die; fi
+if [[ -e "$p".9 ]]; then die; fi
+
+cat "$p".8.ghg >"$p".9.ghg
+cat "$p".8 >> "$p".9.ghg
+if $ghg -d "$p".9.ghg 2>/dev/null; then die; fi
+if $ghg -d <"$p".9.ghg &>/dev/null; then die; fi
+if [[ -e "$p".9 ]]; then die; fi
+
 
 
 echo "-- test: small"
@@ -263,6 +304,66 @@ sha256 "$p".g1 >>"$p".chk
 sha256 "$p".g2 >>"$p".chk
 [[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 3 ]] || { cat "$p".chk; die; }
 
+
+echo "-- test: multifile"
+
+p="$tmp"/multifile.200K
+dd if=/dev/urandom of="$p" bs=200K count=1 status=none
+for n in {1..4}; do cp "$p" "$p"."$n"; done
+
+$ghg -e "$p".1 "$p".2 "$p".3
+sha256 "$p" >"$p".chk
+sha256 "$p".1.ghg >>"$p".chk
+sha256 "$p".2.ghg >>"$p".chk
+sha256 "$p".3.ghg >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 4 && "$(wc -l <"$p".chk)" -eq 4 ]] || { cat "$p".chk; die; }
+
+$ghg "$p".1.ghg "$p".4 "$p".2.ghg
+
+sha256 "$p" >"$p".chk
+sha256 "$p".1 >>"$p".chk
+sha256 "$p".2 >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 3 ]] || { cat "$p".chk; die; }
+
+sha256 "$p" >"$p".chk
+sha256 "$p".3.ghg >>"$p".chk
+sha256 "$p".4.ghg >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 3 && "$(wc -l <"$p".chk)" -eq 3 ]] || { cat "$p".chk; die; }
+
+if $ghg -d "$p".1 "$p".4.ghg 2>/dev/null; then die; fi
+$ghg -e "$p".1 "$p".3.ghg "$p".2
+sha256 "$p" >"$p".chk
+sha256 "$p".1.ghg >>"$p".chk
+sha256 "$p".2.ghg >>"$p".chk
+sha256 "$p".3.ghg.ghg >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 4 && "$(wc -l <"$p".chk)" -eq 4 ]] || { cat "$p".chk; die; }
+
+$ghg "$p".3.ghg.ghg "$p".2.ghg
+if [[ -e "$p".3 ]]; then die; fi
+$ghg "$p".1.ghg "$p".3.ghg
+sha256 "$p" >"$p".chk
+sha256 "$p".1 >>"$p".chk
+sha256 "$p".2 >>"$p".chk
+sha256 "$p".3 >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 4 ]] || { cat "$p".chk; die; }
+
+if $ghg -o "$p".1 "$p".2 "$p".3 >"$p".123 2>/dev/null; then die; fi
+if [[ -s "$p".123 ]]; then die; fi
+
+$ghg -r key-4 "$p".1 "$p".2 "$p".3
+if $ghg "$p".1.ghg 2>/dev/null; then die; fi
+if $ghg "$p".2.ghg 2>/dev/null; then die; fi
+if $ghg "$p".3.ghg 2>/dev/null; then die; fi
+
+if $ghg -o "$p".1.ghg "$p".2.ghg "$p".3.ghg >"$p".123 2>/dev/null; then die; fi
+if [[ -s "$p".123 ]]; then die; fi
+
+$ghg -k key-4 "$p".1.ghg "$p".2.ghg "$p".3.ghg
+sha256 "$p" >"$p".chk
+sha256 "$p".1 >>"$p".chk
+sha256 "$p".2 >>"$p".chk
+sha256 "$p".3 >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 4 ]] || { cat "$p".chk; die; }
 
 
 echo "-- test: 20M"

@@ -282,6 +282,8 @@ let decrypt_v1 sk_list fdesc_src fdesc_dst =
 let () =
 	if !cli_enc && !cli_dec then
 		raise (ArgsFail "-e/--encrypt and -d/--decrypt opts are mutually exclusive");
+	if !cli_stdout && (List.length !cli_files) > 1 then
+		raise (ArgsFail "-o/--stdout cannot be used with more than one file");
 
 	let conf_src =
 		try Unix.in_channel_of_descr (Unix.openfile !cli_conf [O_RDONLY] 0)
