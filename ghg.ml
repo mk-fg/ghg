@@ -56,17 +56,22 @@ let () =
 
 			("-o", Arg.Set cli_stdout, " ");
 			("--stdout", Arg.Set cli_stdout,
-				t^"Encrypt/decrypt to stdout, even when file path is specified, not removing src files.\n");
+				t^"Encrypt/decrypt to stdout, even when file path is specified, not removing src files.");
 			("-s", Arg.Unit Fun.id, " ");
 			("--stable", Arg.Unit Fun.id,
 				t^"Not Implemented: stable encryption option flag, left here for compatibility, does nothing.\n");
+			("-do", Arg.Unit (fun () -> cli_stdout := true; cli_dec := true), "");
+			("-eo", Arg.Unit (fun () -> cli_stdout := true; cli_enc := true), "");
 
-			("-p", Arg.Set cli_key_convert, " ");
-			("--pubkey", Arg.Set cli_key_convert,
-				t^"Print public key for specified -k/--key, or default configured key and exit.");
 			("-g", Arg.Set cli_key_gen, " ");
 			("--genkey", Arg.Set cli_key_gen,
-				t^"Generate/print new random private key and exit.\n");
+				t^"Generate/print new random private key and exit.");
+			("-p", Arg.Set cli_key_convert, " ");
+			("--pubkey", Arg.Set cli_key_convert,
+				t^"Print public key for specified -k/--key or default configured key and exit." ^
+				t^"Can be used together with -g/--genkey to print generated public/private keypair.\n");
+			("-gp", Arg.Unit (fun () -> cli_key_convert := true; cli_key_gen := true), "");
+			("-pg", Arg.Unit (fun () -> cli_key_convert := true; cli_key_gen := true), "");
 
 			("-h", Arg.Set help, " "); ("-help", Arg.Set help, " ") ] in
 	let usage_msg = ("Usage: " ^ Sys.argv.(0) ^ " [opts] [file ...]\
@@ -311,8 +316,9 @@ let () =
 
 	let fdesc_src, fdesc_dst = ref Unix.stdin, ref Unix.stdout in
 	let proc_file fn =
-		let fn_used = fn <> "" && fn <> "-" && not !cli_stdout in
-		if fn_used || !cli_stdout then fdesc_src := Unix.openfile fn [O_RDONLY] 0;
+		let fn_valid = fn <> "" && fn <> "-" in
+		let fn_used = fn_valid && not !cli_stdout in
+		if fn_valid then fdesc_src := Unix.openfile fn [O_RDONLY] 0;
 
 		let magic = Bytes.create magic_len in
 		let rec magic_read n =

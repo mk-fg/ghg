@@ -152,7 +152,8 @@ sha256 "$p".8.ghg.bak.dec >>"$p".chk
 $ghg -o "$p".8 > "$p".8.ghg.bak.dec.ghg
 if $ghg "$p".8.ghg.bak.dec.ghg 2>/dev/null; then die; fi
 
-$ghg -o "$p".8 > "$p".8.ghg
+$ghg -o <"$p".8 >"$p".8.ghg
+$ghg -eo <"$p".8 >"$p".8.ghg
 if $ghg "$p".8 2>/dev/null; then die; fi
 if $ghg "$p".8.ghg 2>/dev/null; then die; fi
 if [[ ! -e "$p".8 ]]; then die; fi
@@ -161,7 +162,7 @@ if [[ ! -e "$p".8.ghg ]]; then die; fi
 cat "$p".8.ghg >"$p".9.ghg
 cat "$p".8.ghg >>"$p".9.ghg
 if $ghg -d "$p".9.ghg 2>/dev/null; then die; fi
-if $ghg -d <"$p".9.ghg &>/dev/null; then die; fi
+if $ghg -do <"$p".9.ghg &>/dev/null; then die; fi
 if [[ -e "$p".9 ]]; then die; fi
 
 cat "$p".8.ghg >"$p".9.ghg
