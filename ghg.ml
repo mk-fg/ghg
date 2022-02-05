@@ -153,8 +153,7 @@ let parse_conf =
 		Hashtbl.filter_map_inplace ( fun k v ->
 			if not (Str.string_match re_link v 0) then Some v else
 			let dk = Str.matched_group 1 v in
-			if n > 100 then raise
-				(ConfParseFail (fmt "unresolvable link %s" dk));
+			if n > 100 then raise (ConfParseFail (fmt "unresolvable link %s" dk));
 			match Hashtbl.find_all c dk with
 				| [] -> Some v | dv -> conf_ext := (k, dv) :: !conf_ext; None ) c;
 		if (List.length !conf_ext) <> 0 then (

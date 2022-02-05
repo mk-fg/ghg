@@ -197,6 +197,10 @@ Links
   compability with the old format of the script here, but those shouldn't apply to new uses,
   so check it out.
 
+- `minisign <https://jedisct1.github.io/minisign/>`_
+
+  Tool for generating signatures for files/data instead of encryption.
+
 - `Earlier python2 ghg script <https://github.com/mk-fg/ghg/blob/c010639/ghg>`_
 
   Should only be useful for some legacy purposes.
