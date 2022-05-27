@@ -137,11 +137,18 @@ Encryption process in pseudocode::
   file_plaintext = input_data
   stable = input_stable_option
   box_dst_pk_list, box_src_sk, box_src_pk = input_keys
+  argon_string, argon_opts = argon_cli_opts
 
   enc_magic = '¯\_ʻghgʻ_/¯'
   enc_ver = '2'
   enc_header_cap = '-'
   enc_block_size = 16384
+  argon_salt = 'ghg.argon2id13.1'
+
+  if argon_string:
+    box_src_sk = crypto_pwhash(
+      box_src_sk || argon_string, argon_salt, argon_opts )
+    box_src_pk = crypto_scalarmult_base(box_src_sk)
 
   sym_key = random(crypto_secretstream_xchacha20poly1305_KEYBYTES)
 
@@ -169,18 +176,24 @@ Weird "enc_magic" unicode stuff in the "header" is an arbitrary magic string to
 be able to easily and kinda-reliably tell if file is encrypted by the presence
 of that.
 
-When decrypting file using bunch of available (configured) keys, crypto_box_open_easy
-decryption is attempted for each "key_slot" line at the top using all specified/configured
-private keys, until any of them works, or exiting with failure otherwise.
+When decrypting file using bunch of available (configured) keys,
+crypto_box_open_easy decryption is attempted for each "key_slot" line at the top
+using all specified/configured private keys, until any of them works, or exiting
+with failure otherwise.
 
 crypto_secretstream_xchacha20poly1305 AEAD encryption should provide both
-secrecy and integrity of the plaintext data, with no additional checksums.
+secrecy and integrity of the plaintext data, with no additional hmac's needed.
+
+Optional Argon2id (1.3) key derivation is performed on the used secret key(s),
+if argon options (fd to read passphrase from and difficulty/memory factors)
+are specified on the command line, which effectively replaces secret key(s)
+being used with one(s) returned from crypto_pwhash().
 
 Unlike gpg, this tool explicitly doesn't do compression, which can be applied
-before encryption manually (encypted data is pretty much incompressible), but do
-keep in mind that it inevitably leaks information about plaintext, which is
-especially bad if attacker has control over any part of it (see attacks against
-compression in TLS for examples).
+before encryption manually (encypted data is pretty much incompressible),
+but do keep in mind that it inevitably leaks information about plaintext,
+which is especially bad if attacker has control over any part of it
+(see issues with compression in TLS for examples).
 
 
 

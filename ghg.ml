@@ -11,15 +11,39 @@
  * Debug: OCAMLRUNPARAM=b ./ghg ...
  *)
 
+exception ArgsFail of string
+exception KeyParseNoMatch
+exception KeyParseMismatch
+exception KeyParseFail of string
+exception DecryptFail of string
+exception ConfParseFail of string
+
 let cli_conf = ref "/etc/ghg.yamlx"
 let cli_enc = ref false
 let cli_dec = ref false
+
 let cli_key_sk = ref []
 let cli_key_sk_add = (fun k -> cli_key_sk := !cli_key_sk @ [k])
 let cli_key_pk = ref []
 let cli_key_pk_add = (fun k -> cli_key_pk := !cli_key_pk @ [k])
 let cli_key_convert = ref false
 let cli_key_gen = ref false
+
+let cli_argon_fd = ref (-1)
+let cli_argon_ops = ref 3
+let cli_argon_mem = ref (Int.of_float (256. *. 2. ** 20.))
+let cli_argon_parse = (fun s ->
+	if not (Str.string_match ( Str.regexp
+		"^\\([0-9]+\\)\\(/\\([0-9]+\\)\\(-[0-9]+\\)?\\)?$" ) s 0)
+	then raise (ArgsFail "Unrecognized -x/--argon-fd option value format")
+	else
+		cli_argon_fd := Str.matched_group 1 s |> int_of_string;
+		try
+			cli_argon_ops := Str.matched_group 3 s |> int_of_string;
+			cli_argon_mem := Int.of_float ( (2. ** 20.) *.
+				(Int.to_float (-1 * (Str.matched_group 4 s |> int_of_string))) )
+		with Not_found -> ())
+
 let cli_files = ref []
 let cli_stdout = ref false
 
@@ -29,30 +53,39 @@ let () =
 			("--conf", Arg.Set_string cli_conf,
 				t^"Alternate encryption-keys-config file location. Default: " ^ !cli_conf ^ "\n");
 
-			("-e", Arg.Set cli_enc, " ");
-			("--encrypt", Arg.Set cli_enc,
+			("-e", Arg.Set cli_enc, "<file/->");
+			("--encrypt", Arg.Set cli_enc, "<file/->" ^
 				t^"Encrypt specified file or stdin stream." ^
 				t^"Symmetric encryption is used for the data, using ad-hoc generated master key." ^
 				t^"crypto_box(nonce, master_key, local_sk, recipient_pk) encrypts master key itself." ^
 				t^"Default local pubkey(s) is/are used as a recipient by default.");
-			("-d", Arg.Set cli_dec, " ");
-			("--decrypt", Arg.Set cli_dec,
+			("-d", Arg.Set cli_dec, "<file/->");
+			("--decrypt", Arg.Set cli_dec, "<file/->" ^
 				t^"Decrypt specified file or stdin stream." ^
 				t^"When decrypting to stdout, authentication/integrity" ^
 				t^" is indicated by exit code (!!!), so Always Check That Exit Code IS 0.\n");
 
-			("-r", Arg.String cli_key_pk_add, " ");
-			("--recipient", Arg.String cli_key_pk_add,
+			("-r", Arg.String cli_key_pk_add, "<key/name>");
+			("--recipient", Arg.String cli_key_pk_add, "<key/name>" ^
 				t^"Public key name/spec(s) to encrypt to." ^
 				t^"Can be specified multiple times to encrypt for each of the keys." ^
 				t^"If this option is used, only specified keys will be used as destination," ^
 				t^" -k/--key is not automatically added to them, i.e. won't be able to decrypt output." ^
 				t^"sk64.* keys can be used here, but shouldn't be - use pk64.* and/or config file.");
-			("-k", Arg.String cli_key_sk_add, " ");
-			("--key", Arg.String cli_key_sk_add,
+			("-k", Arg.String cli_key_sk_add, "<key/name>");
+			("--key", Arg.String cli_key_sk_add, "<key/name>" ^
 				t^"Local secret key name/spec(s) to use for encryption ops. Can be used multiple times." ^
 				t^"Using the option disregards default key specs in the config file, if any." ^
 				t^"Same as with -r/--recipient option, use config for sk64.* keys - args don't work for secrets.\n");
+
+			("-x", Arg.String cli_argon_parse, "<fd[/ops-mem]>");
+			("--argon-fd", Arg.String cli_argon_parse, "<fd[/ops-mem]>" ^
+				t^"Run Argon2id on encryption sk plus a passphrase-line from specified fd to derive new one." ^
+				t^"Argument fd should be just >0 integer, and can optionally have a suffix with libsodium" ^
+				t^" pwhash/argon2id ops and memory parameters, for example 0/3-256 to use fd=0 (stdin) and" ^
+				t^" opslimit=3 memlimit=256M. 3-256 are defaults, see libsodium docs for more info on those." ^
+				t^"Can optionally end in newline character, which will be stripped, but can only have one of it." ^
+				t^"This changes the secret key, so make sure to print/use pubkey after scrypt operation too.\n");
 
 			("-o", Arg.Set cli_stdout, " ");
 			("--stdout", Arg.Set cli_stdout,
@@ -98,6 +131,7 @@ external nacl_key_b64 : nativeint -> string = "nacl_key_b64"
 external nacl_key_hash : nativeint -> string = "nacl_key_hash"
 external nacl_key_encrypt : nativeint -> nativeint -> nativeint -> string = "nacl_key_encrypt"
 external nacl_key_decrypt : nativeint -> string -> nativeint = "nacl_key_decrypt"
+external nacl_key_argon : nativeint -> string -> int -> int -> nativeint = "nacl_key_argon"
 external nacl_encrypt : nativeint -> string -> int -> int -> unit = "nacl_encrypt"
 external nacl_decrypt : nativeint -> int -> int -> unit = "nacl_decrypt"
 external nacl_decrypt_v1 : nativeint -> nativeint -> string -> int -> string -> string = "nacl_decrypt_v1"
@@ -112,16 +146,11 @@ let header_end = "---"
 let header_line_len = 256 (* longer lines will raise errors *)
 let fmt = Printf.sprintf
 let fdesc_to_int : Unix.file_descr -> int = Obj.magic (* ocamllabs/ocaml-ctypes#123 *)
+let fdesc_of_int : int -> Unix.file_descr = Obj.magic
+let errno_to_int : Unix.error -> int = Obj.magic
 let rec eintr_loop f x =
 	try f x with Unix.Unix_error (Unix.EINTR, _, _) -> eintr_loop f x
 
-
-exception ArgsFail of string
-exception KeyParseNoMatch
-exception KeyParseMismatch
-exception KeyParseFail of string
-exception DecryptFail of string
-exception ConfParseFail of string
 
 let parse_conf =
 	let re_v_sep, re_link, re_k, re_v, re_rem, re_kv = Str.(
@@ -297,20 +326,47 @@ let () =
 		~finally:(fun () -> close_in conf_src) in
 	(* Hashtbl.iter (fun k v -> print_endline (fmt "%S: %S" k v)) conf; flush_all (); *)
 
+	(* Wrappers around nacl_gen_key_pair and parse_key_list to mix-in argon key derivation *)
+	let key_argon = if !cli_argon_fd < 0 then "" else
+		try
+			let src = (Unix.in_channel_of_descr (fdesc_of_int !cli_argon_fd)) in
+			try
+				Fun.protect (fun () ->
+						let line = input_line src in
+						try (input_line src |> ignore);
+							raise (ArgsFail "More than one input line at -x/--argon-fd")
+						with End_of_file -> line)
+					~finally:(fun () -> close_in src)
+			with End_of_file -> raise (ArgsFail "EOF when reading from -x/--argon-fd")
+		with Unix.Unix_error (errno, func, arg) -> raise (ArgsFail (fmt
+			"Failure reading from -x/--argon-fd: [%s %d] %s"
+			func (errno_to_int errno) (Unix.error_message errno) )) in
+	let key_gen = if key_argon = "" then nacl_gen_key_pair else (fun () ->
+		let sk, pk = nacl_gen_key_pair () in nacl_key_free pk;
+		let sk = nacl_key_argon sk key_argon !cli_argon_ops !cli_argon_mem in
+		let pk = nacl_key_sk_to_pk sk in (sk, pk)) in
+	let key_parse_list is_sk keys =
+		let key_name = if is_sk then "-k/--key" else "-r/--recipient" in
+		let key_list = parse_key_list conf key_name is_sk keys in
+		if not (is_sk && key_argon <> "") then key_list else
+			List.map (fun sk -> nacl_key_argon sk key_argon !cli_argon_ops !cli_argon_mem) key_list in
+
 	if (List.length !cli_key_sk) = 0 then cli_key_sk := ["-keys"];
 	if (List.length !cli_key_pk) = 0 then cli_key_pk := ["-keys"; "-keys-to"];
 
 	if !cli_key_gen then
-		let sk, pk = nacl_gen_key_pair () in
+		let sk, pk = key_gen () in
 		Fun.protect ( fun () ->
 				print_endline ("sk64." ^ (nacl_key_b64 sk));
 				if !cli_key_convert then print_endline ("pk64." ^ (nacl_key_b64 pk)); exit 0 )
 			~finally:(fun () -> nacl_key_free sk; nacl_key_free pk)
 	else if !cli_key_convert then
-		let pk_list = parse_key_list conf "-k/--key" false !cli_key_sk in
-		Fun.protect ( fun () -> List.iter (fun pk ->
-				print_endline ("pk64." ^ (nacl_key_b64 pk))) pk_list; exit 0 )
-			~finally:(fun () -> List.iter nacl_key_free pk_list)
+		let sk_list = key_parse_list true !cli_key_sk in
+		Fun.protect ( fun () -> List.iter (fun sk ->
+				let pk = nacl_key_sk_to_pk sk in
+				Fun.protect (fun () -> print_endline ("pk64." ^ (nacl_key_b64 pk)))
+				~finally:(fun () -> nacl_key_free pk)) sk_list; exit 0 )
+			~finally:(fun () -> List.iter nacl_key_free sk_list)
 	else
 
 	let fdesc_src, fdesc_dst = ref Unix.stdin, ref Unix.stdout in
@@ -330,7 +386,7 @@ let () =
 		| s when !cli_dec || s = magic_v1 || s = magic_v2 ->
 			let fn_dst = if String.ends_with ~suffix:".ghg" fn
 				then String.sub fn 0 ((String.length fn) - 4) else (fn ^ ".dec") in
-			let sk_list = parse_key_list conf "-k/--key" true
+			let sk_list = key_parse_list true
 				(if !cli_key_sk = ["-keys"] then ["-keys"; "-keys-dec"] else !cli_key_sk) in
 			let dec_func = if s = magic_v1 then decrypt_v1 else decrypt in
 			Fun.protect ( fun () ->
@@ -346,8 +402,8 @@ let () =
 			let key = nacl_gen_key () in
 			let sk_list, pk_list = ref [], ref [] in
 			Fun.protect ( fun () ->
-					sk_list := parse_key_list conf "-k/--key" true !cli_key_sk;
-					pk_list := parse_key_list conf "-r/--recipient" false !cli_key_pk;
+					sk_list := key_parse_list true !cli_key_sk;
+					pk_list := key_parse_list false !cli_key_pk;
 					let sk = List.nth !sk_list 0 in (* no need for >1 sk, as its pk is embedded in the slot *)
 					let key_slots = List.map (fun pk -> nacl_key_encrypt sk pk key) !pk_list in
 					if fn_used then fdesc_dst := Unix.openfile

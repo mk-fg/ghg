@@ -15,6 +15,7 @@ const int key_bs = crypto_secretstream_xchacha20poly1305_KEYBYTES;
 const int b64_type = sodium_base64_VARIANT_URLSAFE_NO_PADDING;
 const int nonce_len = crypto_box_NONCEBYTES;
 const int ct_len = key_bs + crypto_box_MACBYTES;
+const unsigned char * const argon_salt = "ghg.argon2id13.1";
 
 value nacl_init() {
 	CAMLparam0();
@@ -133,6 +134,27 @@ value nacl_key_hash(value v_key) {
 	unsigned char hash_b64[hash_b64_len];
 	sodium_bin2base64(hash_b64, hash_b64_len, hash, hash_len, b64_type);
 	CAMLreturn(caml_alloc_initialized_string(8, hash_b64));
+}
+
+value nacl_key_argon(value v_key, value v_argon, value v_ops, value v_mem) {
+	CAMLparam4(v_key, v_argon, v_ops, v_mem);
+	unsigned char *argon_key = (unsigned char *) Nativeint_val(v_key);
+	unsigned char *argon_pass = String_val(v_argon);
+	unsigned char argon_pass_len = caml_string_length(v_argon);
+	int argon_ops = Int_val(v_ops), argon_mem = Int_val(v_mem);
+
+	int key_src_len = key_bs + argon_pass_len;
+	unsigned char key_src[key_src_len];
+	memcpy(key_src, argon_key, key_bs);
+	memcpy(key_src + key_bs, argon_pass, argon_pass_len);
+
+	unsigned char *key = sodium_malloc(key_bs);
+	if (crypto_pwhash( key, key_bs, key_src, key_src_len,
+			argon_salt, argon_ops, argon_mem, crypto_pwhash_ALG_ARGON2ID13 ))
+		caml_failwith("crypto_pwhash failed");
+
+	sodium_free(argon_key); // frees original key, returns replacement pointer
+	CAMLreturn(caml_copy_nativeint((intptr_t) key));
 }
 
 value nacl_key_encrypt(value v_sk, value v_pk, value v_key) {
