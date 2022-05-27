@@ -302,6 +302,7 @@ value nacl_decrypt_v1(
 	unsigned char nonce[nonce_base_len + 8];
 	memcpy(nonce, nonce_base, nonce_base_len);
 	unsigned char *nonce_n = nonce + nonce_base_len;
+	// Chunk nonce = random(16) || BE-unsigned-long-long(n)
 	nonce_n[0] = nonce_n[1] = nonce_n[2] = nonce_n[3] = 0;
 	nonce_n[4] = (char) (n >> 24) & 0xff; nonce_n[5] = (char) (n >> 16) & 0xff;
 	nonce_n[6] = (char) (n >> 8) & 0xff; nonce_n[7] = (char) n & 0xff;
@@ -311,9 +312,13 @@ value nacl_decrypt_v1(
 	unsigned char buff_in[cb_len];
 	memset(buff_in, 0, cb_pad);
 	memcpy(buff_in + cb_pad, ct, ct_len);
-	unsigned char buff_out[cb_len];
-	if (crypto_box_open(buff_out, buff_in, cb_len, nonce, key_pk, key_sk))
-		caml_failwith("cct-dec crypto_box_open failed");
 
-	CAMLreturn(caml_alloc_initialized_string(cb_len - cb_skip, buff_out + cb_skip));
+	// Using buff_out[...] on-stack segfaults on next line for 4M chunks, hence malloc
+	unsigned char *buff_out = malloc(cb_len);
+	if (crypto_box_open(buff_out, buff_in, cb_len, nonce, key_pk, key_sk))
+		{ free(buff_out); caml_failwith("cct-dec crypto_box_open failed"); }
+	CAMLlocal1(chunk);
+	chunk = caml_alloc_initialized_string(cb_len - cb_skip, buff_out + cb_skip);
+	free(buff_out);
+	CAMLreturn(chunk);
 }
