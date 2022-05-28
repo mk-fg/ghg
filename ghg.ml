@@ -86,6 +86,10 @@ let () =
 				t^" opslimit=3 memlimit=256M. 3-256 are defaults, see libsodium docs for more info on those." ^
 				t^"Can optionally end in newline character, which will be stripped, but can only have one of it." ^
 				t^"This changes the secret key, so make sure to print/use pubkey after scrypt operation too.\n");
+			("-x3", Arg.Unit (fun () -> cli_argon_fd := 3), "");
+			("-ex3", Arg.Unit (fun () -> cli_argon_fd := 3; cli_enc := true), "");
+			("-dx3", Arg.Unit (fun () -> cli_argon_fd := 3; cli_dec := true), "");
+			("-dox3", Arg.Unit (fun () -> cli_argon_fd := 3; cli_dec := true; cli_stdout := true), "");
 
 			("-o", Arg.Set cli_stdout, " ");
 			("--stdout", Arg.Set cli_stdout,
