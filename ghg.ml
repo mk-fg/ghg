@@ -53,14 +53,14 @@ let () =
 			("--conf", Arg.Set_string cli_conf,
 				t^"Alternate encryption-keys-config file location. Default: " ^ !cli_conf ^ "\n");
 
-			("-e", Arg.Set cli_enc, "<file/->");
-			("--encrypt", Arg.Set cli_enc, "<file/->" ^
+			("-e", Arg.Set cli_enc, " ");
+			("--encrypt", Arg.Set cli_enc,
 				t^"Encrypt specified file or stdin stream." ^
 				t^"Symmetric encryption is used for the data, using ad-hoc generated master key." ^
 				t^"crypto_box(nonce, master_key, local_sk, recipient_pk) encrypts master key itself." ^
 				t^"Default local pubkey(s) is/are used as a recipient by default.");
-			("-d", Arg.Set cli_dec, "<file/->");
-			("--decrypt", Arg.Set cli_dec, "<file/->" ^
+			("-d", Arg.Set cli_dec, " ");
+			("--decrypt", Arg.Set cli_dec,
 				t^"Decrypt specified file or stdin stream." ^
 				t^"When decrypting to stdout, authentication/integrity" ^
 				t^" is indicated by exit code (!!!), so Always Check That Exit Code IS 0.\n");
@@ -111,11 +111,11 @@ let () =
 
 			("-h", Arg.Set help, " "); ("-help", Arg.Set help, " ") ] in
 	let usage_msg = ("Usage: " ^ Sys.argv.(0) ^ " [opts] [file ...]\
-		\n\nEncrypt/decrypt specified files via libsodium, using specified/configured keys.\n\
+		\n\nEncrypt/decrypt file(s) via libsodium's crypto_box/xchacha20, using specified/configured keys.\n\
 		Direction is auto-detected from file/stream contents, if not explicitly specified.\n\
 		File suffix/extension .ghg is added when encrypting named files, and original unlinked.\n\
-		When decrypting named files, .ghg suffix stripped (or .dec added), encrypted file removed.\n\
-		Default is to use stdin/stdout (\"-\" arg also works as those).\n") in
+		When decrypting named files, .ghg suffix is stripped (or .dec added), encrypted file removed.\n\
+		Default is to use stdin/stdout streams (\"-\" arg also works as those).\n") in
 	Arg.parse args (fun file -> cli_files := file :: !cli_files) usage_msg;
 	if !help then (Arg.usage args usage_msg; exit 0)
 

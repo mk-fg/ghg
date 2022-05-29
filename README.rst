@@ -104,6 +104,9 @@ Here are some usage examples::
   sk64.GfJUQ51_BwWtaqZknIX0Lh129hh_T3eDKzpx3RwV77c=
   ## Generate and print new private key
 
+  % ghg -x3 somefile.ghg 3<<< secret-argon2id-passphrase
+  ## Decrypt file using a key derived from secret key + extra argon2id passphrase
+
 Some general knowledge of how assymetric crypto works is assumed on the part of the user,
 such as understanding of basic concepts like "public" and "private" keys, for example.
 
