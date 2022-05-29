@@ -434,33 +434,32 @@ $ghg -d <"$p".101.ghg >"$p".101
 
 $ghg -r $apk -e <"$p".1 >"$p".11.ghg
 $ghg -r $apk -k $sk -e <"$p".1 >"$p".12.ghg
-$ghg -r $apk -k $sk -x 3 -e <"$p".1 >"$p".13.ghg 3<<< "$ak"
-$ghg -r $apk -k key-2 -e <"$p".1 >"$p".14.ghg
+$ghg -r $apk -k key-2 -e <"$p".1 >"$p".13.ghg
 $ghg -r $apk -e <"$p".2 >"$p".21.ghg
 
+if $ghg -e -x 3 <"$p".1 >/dev/null 2>/dev/null 3<<< "$ak"; then die; fi
 if $ghg -d <"$p".11.ghg >"$p".11 2>/dev/null; then die; fi
 if $ghg -d <"$p".13.ghg >"$p".13 2>/dev/null; then die; fi
 if $ghg -k $sk -d <"$p".11.ghg >"$p".11 2>/dev/null; then die; fi
 if $ghg -k $sk -d <"$p".12.ghg >"$p".12 2>/dev/null; then die; fi
 
-aghg="$ghg -x 3 -k $sk"
-$aghg -d <"$p".11.ghg >"$p".11 3<<< "$ak"
-$aghg -d <"$p".12.ghg >"$p".12 3<<< "$ak"
-$aghg -d <"$p".13.ghg >"$p".13 3< <(echo -n "$ak")
-$aghg -d <"$p".14.ghg >"$p".14 3< <(echo "$ak")
-$aghg -d <"$p".21.ghg >"$p".21 3<<< "$ak"
+aghg="$ghg -k $sk"
+$aghg -d -x 3 <"$p".11.ghg >"$p".11 3<<< "$ak"
+$aghg -dx3 <"$p".12.ghg >"$p".12 3<<< "$ak"
+$aghg -dox3 <"$p".13.ghg >"$p".13 3< <(echo -n "$ak")
+$aghg -d -x3 <"$p".21.ghg >"$p".21 3<<< "$ak"
 
 sha256 "$p".1 >"$p".chk
 sha256 "$p".11 >>"$p".chk
 sha256 "$p".12 >>"$p".chk
 sha256 "$p".13 >>"$p".chk
-sha256 "$p".14 >>"$p".chk
-[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 5 ]] || { cat "$p".chk; die; }
+[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 4 ]] || { cat "$p".chk; die; }
 
 sha256 "$p".11 >"$p".chk
 sha256 "$p".21 >>"$p".chk
 [[ "$(sort -u "$p".chk | wc -l)" -eq 2 && "$(wc -l <"$p".chk)" -eq 2 ]] || { cat "$p".chk; die; }
 
+aghg="$ghg -x3 -k $sk"
 if $aghg -d <"$p".101.ghg >"$p".101 2>/dev/null 3<<< "$ak"; then die; fi
 if $aghg -d <"$p".102.ghg >"$p".102 2>/dev/null 3<<< "$ak"; then die; fi
 

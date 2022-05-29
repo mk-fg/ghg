@@ -80,14 +80,13 @@ let () =
 
 			("-x", Arg.String cli_argon_parse, "<fd[/ops-mem]>");
 			("--argon-fd", Arg.String cli_argon_parse, "<fd[/ops-mem]>" ^
-				t^"Run Argon2id on encryption sk plus a passphrase-line from specified fd to derive new one." ^
+				t^"Run Argon2id on all used sk(s) plus a passphrase-line from specified fd to derive new one(s)." ^
 				t^"Argument fd should be just >0 integer, and can optionally have a suffix with libsodium" ^
 				t^" pwhash/argon2id ops and memory parameters, for example 0/3-256 to use fd=0 (stdin) and" ^
 				t^" opslimit=3 memlimit=256M. 3-256 are defaults, see libsodium docs for more info on those." ^
 				t^"Can optionally end in newline character, which will be stripped, but can only have one of it." ^
-				t^"This changes the secret key, so make sure to print/use pubkey after scrypt operation too.\n");
+				t^"This changes the secret key(s), so make sure to print/use new pubkey after this operation.\n");
 			("-x3", Arg.Unit (fun () -> cli_argon_fd := 3), "");
-			("-ex3", Arg.Unit (fun () -> cli_argon_fd := 3; cli_enc := true), "");
 			("-dx3", Arg.Unit (fun () -> cli_argon_fd := 3; cli_dec := true), "");
 			("-dox3", Arg.Unit (fun () -> cli_argon_fd := 3; cli_dec := true; cli_stdout := true), "");
 
@@ -319,6 +318,8 @@ let decrypt_v1 sk_list fdesc_src fdesc_dst =
 let () =
 	if !cli_enc && !cli_dec then
 		raise (ArgsFail "-e/--encrypt and -d/--decrypt opts are mutually exclusive");
+	if !cli_enc && !cli_argon_fd >= 0 then
+		raise (ArgsFail "-x/--argon-fd option is meaningless with -e/--encrypt, and prohibited to avoid confusion");
 	if !cli_stdout && (List.length !cli_files) > 1 then
 		raise (ArgsFail "-o/--stdout cannot be used with more than one file");
 
