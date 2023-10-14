@@ -35,7 +35,7 @@ value nacl_init() {
 value nacl_b64_to_string(value v_b64, value v_len) {
 	// Load base64-string to a string of specified (expected) length
 	CAMLparam1(v_b64);
-	unsigned char *b64 = String_val(v_b64);
+	const unsigned char *b64 = String_val(v_b64);
 	int bin_len = Int_val(v_len);
 	unsigned char bin[bin_len];
 	const char *b64_end; size_t bin_len_dec;
@@ -50,7 +50,7 @@ value nacl_b64_to_string(value v_b64, value v_len) {
 value nacl_string_to_b64(value v_bin) {
 	// Return base64-string of a string
 	CAMLparam1(v_bin);
-	unsigned char *bin = String_val(v_bin);
+	const unsigned char *bin = String_val(v_bin);
 	int bin_len = caml_string_length(v_bin);
 	int b64_len = sodium_base64_encoded_len(bin_len, b64_type);
 	unsigned char b64[b64_len];
@@ -84,7 +84,7 @@ value nacl_key_load(value v_key_b64) {
 	CAMLparam1(v_key_b64);
 	char *err;
 	size_t key_b64_len = caml_string_length(v_key_b64);
-	unsigned char *key_b64 = String_val(v_key_b64);
+	const unsigned char *key_b64 = String_val(v_key_b64);
 	const char *key_b64_end; size_t key_len;
 	unsigned char *key = sodium_malloc(key_bs);
 	if (sodium_base642bin( key, key_bs,
@@ -139,7 +139,7 @@ value nacl_key_hash(value v_key) {
 value nacl_key_argon(value v_key, value v_argon, value v_ops, value v_mem) {
 	CAMLparam4(v_key, v_argon, v_ops, v_mem);
 	unsigned char *argon_key = (unsigned char *) Nativeint_val(v_key);
-	unsigned char *argon_pass = String_val(v_argon);
+	const unsigned char *argon_pass = String_val(v_argon);
 	unsigned char argon_pass_len = caml_string_length(v_argon);
 	int argon_ops = Int_val(v_ops), argon_mem = Int_val(v_mem);
 
@@ -183,7 +183,7 @@ value nacl_key_encrypt(value v_sk, value v_pk, value v_key) {
 value nacl_key_decrypt(value v_sk, value v_ct_b64) {
 	CAMLparam2(v_sk, v_ct_b64);
 	unsigned char *key_sk = (unsigned char *) Nativeint_val(v_sk);
-	unsigned char *ct_b64 = String_val(v_ct_b64);
+	const unsigned char *ct_b64 = String_val(v_ct_b64);
 	size_t ct_b64_len = caml_string_length(v_ct_b64);
 	char *err;
 	unsigned char *key = sodium_malloc(key_bs);
@@ -313,8 +313,8 @@ value nacl_decrypt_v1(
 	CAMLparam5(v_sk, v_pk, v_nonce, v_n, v_ct);
 	unsigned char *key_sk = (unsigned char *) Nativeint_val(v_sk);
 	unsigned char *key_pk = (unsigned char *) Nativeint_val(v_pk);
-	unsigned char *nonce_base = String_val(v_nonce);
-	unsigned char *ct = String_val(v_ct);
+	const unsigned char *nonce_base = String_val(v_nonce);
+	const unsigned char *ct = String_val(v_ct);
 	int ct_len = caml_string_length(v_ct);
 	uint32_t n = Int_val(v_n);
 

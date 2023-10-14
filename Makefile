@@ -1,9 +1,10 @@
 LDLIBS = -cclib -lsodium -ccopt -Wl,--no-as-needed
+OCAMLLIBS = -I +unix unix.cmxa -I +str str.cmxa
 
 all: ghg
 
 ghg: ghg.ml ghg.ml.c
-	ocamlopt -o $@ -O2 unix.cmxa str.cmxa $(LDLIBS) $^
+	ocamlopt -o $@ -O2 $(OCAMLLIBS) $(LDLIBS) $^
 	strip $@
 
 clean:
