@@ -83,7 +83,7 @@ Here are some usage examples::
 
   % ghg -h
   ...
-  ## Should neatly describe how it works and all supported options
+  ## Should describe how tool works and all supported options
 
   % ghg -e secret-data.txt
   % ghg -d secret-data.txt.ghg
@@ -113,8 +113,11 @@ Here are some usage examples::
   % ghg -x3 somefile.ghg 3<<< secret-argon2id-passphrase
   ## Decrypt file using a key derived from secret key + extra argon2id passphrase
 
+  % ghg -x3 -k %4 somefile.ghg 3<<< secret-argon2id-passphrase 4<<< sk64.some-key
+  ## Same as above, but provide decryption private key via a file descriptor as well
+
 Some general knowledge of how assymetric crypto works is assumed on the part of the user,
-such as understanding of basic concepts like "public" and "private" keys, for example.
+such as understanding of basic concepts like public and private keys, for example.
 
 
 
@@ -214,10 +217,9 @@ Links
   More recent tool similar to an older python2 ghg script here, with a lot more
   features than current ghg.ml, but also a lot more unnecessary junk and dependencies.
 
-  Considered migrating to it (or its `rage <https://github.com/str4d/rage>`_ rewrite)
-  myself, but couldn't justify extra complexity that involves, and wanted backwards
-  compability with the old format of the script here, but those shouldn't apply to new uses,
-  so check it out.
+  Considered migrating to it (or its `rage <https://github.com/str4d/rage>`_ rewrite) myself,
+  but couldn't justify extra complexity that involves, and wanted backwards compability with
+  the old format of the script here, but those shouldn't apply to new uses, so check it out.
 
 - `minisign <https://jedisct1.github.io/minisign/>`_
 

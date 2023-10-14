@@ -19,6 +19,7 @@ set -e -o pipefail
 [[ -z "$debug" ]] || set -x
 tmp=$(mktemp -d /tmp/.ghg-test.XXXXXX)
 [[ -n "$debug" ]] || trap "rm -rf '$tmp'" EXIT
+trap 'echo "FAILURE at line $LINENO (ts=$ts): $BASH_COMMAND"' ERR
 
 cat >"$tmp"/ghg.yamlx <<EOF
 
@@ -208,18 +209,20 @@ echo "-- test: multikey"
 p="$tmp"/file.multi
 dd if=/dev/urandom of="$p" bs=300 count=1 status=none
 
+# -s/--stable does nothing now - checks are only for option to not fail
 $ghg -s -o -r $($ghg -p) "$p" >"$p".stable1.ghg
-$ghg -s -o -r $($ghg -p mykey) "$p" >"$p".stable2.ghg
+$ghg -s -o -r $($ghg -p -k mykey) "$p" >"$p".stable2.ghg
 $ghg -s -o -r mykey "$p" >"$p".stable3.ghg
 
 : >"$p".chk
 for pn in "$p".stable*.ghg; do sha256 "$pn" >>"$p".chk; done
 # [[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 3 ]] || { cat "$p".chk; die; }
 
-$ghg -s -o -r key-2 "$p" >"$p".k2-1.ghg
-$ghg -s -o -k key-2 -r key-4 "$p" >"$p".k2-2.ghg
-$ghg -s -o -k key-3 -r key-2 "$p" >"$p".k2-3.ghg
-$ghg -s -o -k key-3 -r key-2 -r key-3 "$p" >"$p".k2-4.ghg
+$ghg -o -r key-2 "$p" >"$p".k2-1.ghg
+$ghg -o -k key-2 -r key-4 "$p" >"$p".k2-2.ghg
+$ghg -o -k key-3 -r key-2 "$p" >"$p".k2-3.ghg
+$ghg -o -k key-3 -r key-2 -r key-3 "$p" >"$p".k2-4.ghg
+echo key-4 | $ghg -o -k %0 -r %237 "$p" >"$p".k2-5.ghg 237<<< $($ghg -p -k key-5)
 
 sha256 "$p" >"$p".chk
 sha256 "$p".stable1.ghg >>"$p".chk
@@ -227,13 +230,15 @@ sha256 "$p".k2-1.ghg >>"$p".chk
 sha256 "$p".k2-2.ghg >>"$p".chk
 sha256 "$p".k2-3.ghg >>"$p".chk
 sha256 "$p".k2-4.ghg >>"$p".chk
-[[ "$(sort -u "$p".chk | wc -l)" -eq 6 && "$(wc -l <"$p".chk)" -eq 6 ]] || { cat "$p".chk; die; }
+sha256 "$p".k2-5.ghg >>"$p".chk
+[[ "$(sort -u "$p".chk | wc -l)" -eq 7 && "$(wc -l <"$p".chk)" -eq 7 ]] || { cat "$p".chk; die; }
 
 $ghg -k key-2 "$p".k2-1.ghg
 $ghg -k key-4 -d "$p".k2-2.ghg
 if $ghg -k key-3 -d "$p".k2-3.ghg 2>/dev/null; then die; fi
 $ghg -k key-2 -d "$p".k2-3.ghg
 $ghg -k key-3 -d "$p".k2-4.ghg
+$ghg -k key-5 -d "$p".k2-5.ghg
 $ghg -d "$p".stable1.ghg
 
 sha256 "$p" >"$p".chk
@@ -241,8 +246,9 @@ sha256 "$p".k2-1 >>"$p".chk
 sha256 "$p".k2-2 >>"$p".chk
 sha256 "$p".k2-3 >>"$p".chk
 sha256 "$p".k2-4 >>"$p".chk
+sha256 "$p".k2-5 >>"$p".chk
 sha256 "$p".stable1 >>"$p".chk
-[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 6 ]] || { cat "$p".chk; die; }
+[[ "$(sort -u "$p".chk | wc -l)" -eq 1 && "$(wc -l <"$p".chk)" -eq 7 ]] || { cat "$p".chk; die; }
 
 $ghg -r pk64.DZqKsImH_Rizt38ariDw-jD-E9pXFbNQ38aoyKIIn2k= -r key-3 <"$p" >"$p".k2-1.ghg
 $ghg -k key-2 -r pk64.mIkC20NfVcFLgKJ5bm5ck93BB55R0XjXTElbtKZ6zSs= -r key-3 <"$p" >"$p".k2-2.ghg

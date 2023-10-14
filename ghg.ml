@@ -71,12 +71,14 @@ let () =
 				t^"Can be specified multiple times to encrypt for each of the keys." ^
 				t^"If this option is used, only specified keys will be used as destination," ^
 				t^" -k/--key is not automatically added to them, i.e. won't be able to decrypt output." ^
-				t^"sk64.* keys can be used here, but shouldn't be - use pk64.* and/or config file.");
+				t^"sk64.* keys can be used here, but shouldn't be - use pk64.* and/or config file." ^
+				t^"Special %<fd> format (e.g. %3 or %78) can be used to read key spec from file descriptor.");
 			("-k", Arg.String cli_key_sk_add, "<key/name>");
 			("--key", Arg.String cli_key_sk_add, "<key/name>" ^
-				t^"Local secret key name/spec(s) to use for encryption ops. Can be used multiple times." ^
+				t^"Local secret key name/spec/fd(s) to use for encryption ops. Can be used multiple times." ^
 				t^"Using the option disregards default key specs in the config file, if any." ^
-				t^"Same as with -r/--recipient option, use config for sk64.* keys - args don't work for secrets.\n");
+				t^"Same as with -r/--recipient option, use config or fds for sk64.* keys" ^
+				t^" - command-line arguments are not suitable to pass any kind of secrets.\n");
 
 			("-x", Arg.String cli_argon_parse, "<fd[/ops-mem]>");
 			("--argon-fd", Arg.String cli_argon_parse, "<fd[/ops-mem]>" ^
@@ -199,8 +201,8 @@ let parse_conf =
 
 let parse_key_list =
 	(* Keys are NOT printed in errors here on purpose, to avoid exposing them *)
-	let re_pk64, re_sk64, re_link = Str.(
-		regexp "^pk64\\.\\(.*\\)$", regexp "^sk64\\.\\(.*\\)$", regexp "^link\\.\\(.*\\)$" ) in
+	let re_link, re_pk64, re_sk64  = Str.( regexp "^link\\.\\([^ ]+\\)$",
+		regexp "^pk64\\.\\([-_a-zA-Z0-9+/=]+\\)$", regexp "^sk64\\.\\([-_a-zA-Z0-9+/=]+\\)$" ) in
 	let parse_key_b64 spec =
 		try nacl_key_load spec
 		with Failure err -> raise (KeyParseFail err) in
@@ -331,27 +333,34 @@ let () =
 		~finally:(fun () -> close_in conf_src) in
 	(* Hashtbl.iter (fun k v -> print_endline (fmt "%S: %S" k v)) conf; flush_all (); *)
 
-	(* Wrappers around nacl_gen_key_pair and parse_key_list to mix-in argon key derivation *)
-	let key_argon = if !cli_argon_fd < 0 then "" else
+	let cli_input_from_fd fd fd_desc =
 		try
-			let src = (Unix.in_channel_of_descr (fdesc_of_int !cli_argon_fd)) in
+			let src = (Unix.in_channel_of_descr (fdesc_of_int fd)) in
 			try
 				Fun.protect (fun () ->
 						let line = input_line src in
 						try (input_line src |> ignore);
-							raise (ArgsFail "More than one input line at -x/--argon-fd")
+							raise (ArgsFail ("More than one input line at " ^ fd_desc))
 						with End_of_file -> line)
 					~finally:(fun () -> close_in src)
-			with End_of_file -> raise (ArgsFail "EOF when reading from -x/--argon-fd")
+			with End_of_file -> raise (ArgsFail ("EOF when reading from " ^ fd_desc))
 		with Unix.Unix_error (errno, func, arg) -> raise (ArgsFail (fmt
-			"Failure reading from -x/--argon-fd: [%s %d] %s"
-			func (errno_to_int errno) (Unix.error_message errno) )) in
+			"Failure reading from %s: [%s %d] %s"
+			fd_desc func (errno_to_int errno) (Unix.error_message errno) )) in
+
+	(* Wrappers around nacl_gen_key_pair and parse_key_list to mix-in argon key derivation *)
+	let key_argon = if !cli_argon_fd < 0 then ""
+		else cli_input_from_fd !cli_argon_fd "-x/--argon-fd" in
 	let key_gen = if key_argon = "" then nacl_gen_key_pair else (fun () ->
 		let sk, pk = nacl_gen_key_pair () in nacl_key_free pk;
 		let sk = nacl_key_argon sk key_argon !cli_argon_ops !cli_argon_mem in
 		let pk = nacl_key_sk_to_pk sk in (sk, pk)) in
+	let re_key_fd = Str.regexp "%\\([0-9]+\\)$" in
 	let key_parse_list is_sk keys =
 		let key_name = if is_sk then "-k/--key" else "-r/--recipient" in
+		let keys = List.map (fun spec -> if Str.string_match re_key_fd spec 0
+			then cli_input_from_fd (Str.matched_group 1 spec |> int_of_string) (key_name ^ " fd-spec")
+			else spec) keys in
 		let key_list = parse_key_list conf key_name is_sk keys in
 		if not (is_sk && key_argon <> "") then key_list else
 			List.map (fun sk -> nacl_key_argon sk key_argon !cli_argon_ops !cli_argon_mem) key_list in
