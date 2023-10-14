@@ -4,16 +4,17 @@ ghg
 Simple command-line NaCl/libsodium file encryption tool.
 
 Intended to be a replacement for GnuPG_ file encryption mode (as in command-line
-"gpg" tool), based on modern libsodium_ crypto primitives like `NaCl crypto_box`_
-and secretstream_xchacha20poly1305 instead of old/brittle ElGamal and AES-based stuff.
+"gpg" tool), based on modern libsodium_ crypto primitives like `NaCl crypto_box`_ and
+secretstream_xchacha20poly1305, instead of an old/brittle/clunky ElGamal and AES-based stuff.
 
 Allows for an easy and efficient one-way file/pipe encryption from private to public
-keys, and having a lists of these, using any matching local private key(s) for decryption.
+keys, and having lists of these, using any matching local private key(s) for decryption.
 
-Doesn't require complex key/trust management stuff, uses short base64-encoded
-ed25519 public/private key strings.
-All key management happens by editing very simple YAML-like text file in
-``/etc/ghg.yamlx``, or a path specified via ``-c/--conf`` option.
+Uses short base64-encoded ed25519 public/private key strings.
+
+Doesn't require complex key/trust management stuff, which is more direct and manual here,
+through options or editing very simple YAML-like text file in ``/etc/ghg.yamlx`` (or path
+specified via ``-c/--conf`` option).
 
 It does not have any kind of gpg-agent/ssh-agent like stuff for key passphrases,
 not intended for email encryption or authentication (signatures), no compression,
@@ -29,10 +30,9 @@ Is it Certified, Peer-Reviewed or blessed-by-EFF-and-Crypto-Jesus-himself? Hell 
 
 This tool was originally implemented as a python2 script (started in `mk-fg/fgtk repo`_),
 which used slightly different file format (which is still supported for decryption
-with same keys), proper YAML config, and had some extra options, like stable encryption,
+with same keys), actual-YAML config (yuck), and had some extra options like stable encryption,
 parsing/using SSH ed25519 keys, etc, which only ended up being an unnecessary complication
 for my use-cases.
-
 That old script should be accessible via e.g. `commit c010639 here`_ for whatever legacy purposes.
 
 .. contents::
@@ -116,7 +116,7 @@ Here are some usage examples::
   % ghg -x3 -k %4 somefile.ghg 3<<< secret-argon2id-passphrase 4<<< sk64.some-key
   ## Same as above, but provide decryption private key via a file descriptor as well
 
-Some general knowledge of how assymetric crypto works is assumed on the part of the user,
+Some general knowledge about how asymetric crypto works is assumed on the part of the user,
 such as understanding of basic concepts like public and private keys, for example.
 
 
@@ -199,7 +199,7 @@ secrecy and integrity of the plaintext data, with no additional hmac's needed.
 Optional Argon2id (1.3) key derivation is performed on the used secret key(s),
 if argon options (fd to read passphrase from and difficulty/memory factors)
 are specified on the command line, which effectively replaces secret key(s)
-being used with one(s) returned from crypto_pwhash().
+being used, with one(s) returned from crypto_pwhash().
 
 Unlike gpg, this tool explicitly doesn't do compression, which can be applied
 before encryption manually (encypted data is pretty much incompressible),
