@@ -38,6 +38,12 @@ That old script should be accessible via e.g. `commit c010639 here`_ for whateve
 .. contents::
   :backlinks: none
 
+This repository URLs:
+
+- https://github.com/mk-fg/ghg
+- https://codeberg.org/mk-fg/ghg
+- https://fraggod.net/code/git/ghg
+
 
 
 Usage
