@@ -19,7 +19,7 @@ set -e -o pipefail
 [[ -z "$debug" ]] || set -x
 tmp=$(mktemp -d /tmp/.ghg-test.XXXXXX)
 [[ -n "$debug" ]] || trap "rm -rf '$tmp'" EXIT
-trap 'echo "FAILURE at line $LINENO (ts=$ts): $BASH_COMMAND"' ERR
+trap 'echo "FAILURE at line $LINENO :: $BASH_COMMAND"' ERR
 
 cat >"$tmp"/ghg.yamlx <<EOF
 

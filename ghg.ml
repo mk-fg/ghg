@@ -49,8 +49,8 @@ let cli_stdout = ref false
 
 let () =
 	let t, help = "\n      ", ref false in let args =
-		[ ("-c", Arg.Set_string cli_conf, " ");
-			("--conf", Arg.Set_string cli_conf,
+		[ ("-c", Arg.Set_string cli_conf, "<file>");
+			("--conf", Arg.Set_string cli_conf, "<file>" ^
 				t^"Alternate encryption-keys-config file location. Default: " ^ !cli_conf ^ "\n");
 
 			("-e", Arg.Set cli_enc, " ");
